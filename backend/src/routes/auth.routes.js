@@ -70,13 +70,13 @@ roteador.post('/login', async (req, res) => {
     }
 
     const token = jwt.sign(
-      { id: usuario.id, role: usuario.role },
+      { id: usuario.id, role: usuario.role, clientId: usuario.clientId },
       process.env.JWT_SECRET || 'super_secret_jwt_key_botmanager_2024',
       { expiresIn: '7d' }
     );
 
     res.json({
-      usuario: { id: usuario.id, name: usuario.name, email: usuario.email, role: usuario.role },
+      usuario: { id: usuario.id, name: usuario.name, email: usuario.email, role: usuario.role, clientId: usuario.clientId || null },
       token
     });
   } catch (erro) {
@@ -86,10 +86,10 @@ roteador.post('/login', async (req, res) => {
 
 roteador.get('/perfil', middlewareAutenticacao, async (req, res) => {
   try {
-    const usuario = await prisma.user.findUnique({ where: { id: req.usuarioId } });
+    const usuario = await prisma.user.findUnique({ where: { id: req.usuario.id } });
     if (!usuario) return res.status(404).json({ erro: 'Usuário não encontrado' });
     
-    res.json({ id: usuario.id, name: usuario.name, email: usuario.email, role: usuario.role });
+    res.json({ id: usuario.id, name: usuario.name, email: usuario.email, role: usuario.role, clientId: usuario.clientId || null });
   } catch (erro) {
     res.status(500).json({ erro: 'Erro ao buscar perfil' });
   }

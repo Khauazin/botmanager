@@ -8,155 +8,134 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// ─── Usuários da plataforma (você e sua equipe) ────────────
 model User {
   id        String   @id @default(uuid())
   name      String
   email     String   @unique
   password  String
   role      Role     @default(ADMIN)
-  clientId  String?  // Nulo para ADMIN, Preenchido para CLIENT/VIEWER
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-
-  client    Client?  @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  clientId  String?
   alerts    Alert[]
+  client    Client?  @relation(fields: [clientId], references: [id], onDelete: Cascade)
 
   @@map("users")
 }
 
-// ─── Clientes contratantes ────────────────────────────────
 model Client {
-  id        String       @id @default(uuid())
-  name      String
-  email     String?
-  phone     String?
-  segment   String?
-  plan      Plan         @default(BASIC)
-  status    ClientStatus @default(ACTIVE)
-  monthlyFee Float       @default(0)
-  notes     String?
-  createdAt DateTime     @default(now())
-  updatedAt DateTime     @updatedAt
-
-  bots      Bot[]
-  alerts    Alert[]
-  leads     Lead[]
-  leadStages LeadStage[]
+  id           String        @id @default(uuid())
+  name         String
+  email        String?
+  phone        String?
+  segment      String?
+  plan         Plan          @default(BASIC)
+  status       ClientStatus  @default(ACTIVE)
+  monthlyFee   Float         @default(0)
+  notes        String?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  alerts       Alert[]
   appointments Appointment[]
+  bots         Bot[]
+  leadStages   LeadStage[]
+  leads        Lead[]
   sales        Sale[]
   users        User[]
 
   @@map("clients")
 }
 
-// ─── Bots de cada cliente ─────────────────────────────────
 model Bot {
-  id              String    @id @default(uuid())
-  clientId        String
-  name            String
-  channel         Channel   @default(WHATSAPP)
-  status          BotStatus @default(OFFLINE)
-  phoneNumber     String?   // Número do WhatsApp conectado
-  messagesTotal   Int       @default(0)
-  messagesToday   Int       @default(0)
-  
-  // Configurações de Inteligência Artificial
-  aiProvider      AIProvider? // Ex: OPENAI, ANTHROPIC, DEEPSEEK
-  aiModel         String?     // Ex: gpt-4o-mini
-  aiApiKey        String?     // Token/Chave da API da IA
-  aiSystemPrompt  String?     @db.Text
-  aiTemperature   Float?      @default(0.7)
-
-  lastActivityAt  DateTime?
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
-
-  client     Client      @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  alerts     Alert[]
-  flows      Flow[]      // Fluxos deste bot
-  variables  BotVariable[] // Variáveis que o cliente pode editar
+  id             String        @id @default(uuid())
+  clientId       String
+  name           String
+  channel        Channel       @default(WHATSAPP)
+  status         BotStatus     @default(OFFLINE)
+  phoneNumber    String?
+  messagesTotal  Int           @default(0)
+  messagesToday  Int           @default(0)
+  lastActivityAt DateTime?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  aiModel        String?
+  aiProvider     AIProvider?
+  aiSystemPrompt String?
+  aiTemperature  Float?        @default(0.7)
+  aiApiKey       String?
+  alerts         Alert[]
+  variables      BotVariable[]
+  client         Client        @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  flows          Flow[]
 
   @@map("bots")
 }
 
-// Variáveis editáveis pelo cliente (Textos de saudação, horários, etc)
 model BotVariable {
   id          String   @id @default(uuid())
   botId       String
-  key         String   // ex: "GREETING_MESSAGE"
-  value       String   // ex: "Olá! Como posso ajudar?"
-  description String?  // Para exibir no painel do cliente ("Mensagem de boas vindas")
-  type        VarType  @default(TEXT) // TEXT, NUMBER, BOOLEAN
+  key         String
+  value       String
+  description String?
+  type        VarType  @default(TEXT)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
-
   bot         Bot      @relation(fields: [botId], references: [id], onDelete: Cascade)
 
   @@unique([botId, key])
   @@map("bot_variables")
 }
 
-// ─── Construtor de Fluxos (Builder) ───────────────────────
 model Flow {
-  id          String   @id @default(uuid())
-  botId       String
-  name        String
-  isActive    Boolean  @default(false)
-  triggerType TriggerType @default(KEYWORD) // KEYWORD, DEFAULT, ALWAYS
-  triggerKeyword String? // Se for KEYWORD, qual a palavra chave?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  bot         Bot      @relation(fields: [botId], references: [id], onDelete: Cascade)
-  nodes       Node[]
-  edges       Edge[]
+  id             String      @id @default(uuid())
+  botId          String
+  name           String
+  isActive       Boolean     @default(false)
+  triggerType    TriggerType @default(KEYWORD)
+  triggerKeyword String?
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+  edges          Edge[]
+  bot            Bot         @relation(fields: [botId], references: [id], onDelete: Cascade)
+  nodes          Node[]
 
   @@map("flows")
 }
 
-// Blocos do construtor
 model Node {
-  id        String   @id // ID gerado pelo React Flow no frontend
+  id        String   @id
   flowId    String
-  type      NodeType // MESSAGE, QUESTION, CONDITION, ACTION, etc
+  type      NodeType
   positionX Float
   positionY Float
-  data      Json     // Dados específicos do nó (texto da msg, etc)
+  data      Json
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-
   flow      Flow     @relation(fields: [flowId], references: [id], onDelete: Cascade)
 
   @@map("nodes")
 }
 
-// Conexões entre blocos
 model Edge {
-  id           String   @id // ID gerado pelo React Flow
+  id           String   @id
   flowId       String
-  sourceNodeId String   // ID do Node origem
-  targetNodeId String   // ID do Node destino
-  sourceHandle String?  // Para condições (true/false, opções)
+  sourceNodeId String
+  targetNodeId String
+  sourceHandle String?
   createdAt    DateTime @default(now())
-
   flow         Flow     @relation(fields: [flowId], references: [id], onDelete: Cascade)
 
   @@map("edges")
 }
 
-// ─── CRM do Cliente ───────────────────────────────────────
-
-// Fases do Funil (Kanban)
 model LeadStage {
   id        String   @id @default(uuid())
   clientId  String
-  name      String   // Ex: "Novo", "Em Atendimento", "Agendado", "Fechado"
-  order     Int      // Ordem no Kanban
-  color     String?  // Cor da coluna
+  name      String
+  order     Int
+  color     String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-
   client    Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
   leads     Lead[]
 
@@ -164,104 +143,116 @@ model LeadStage {
 }
 
 model Lead {
-  id          String   @id @default(uuid())
-  clientId    String
-  stageId     String?  // Pode não ter stage inicialmente
-  name        String
-  phone       String?
-  email       String?
-  value       Float?   // Valor potencial do lead
-  notes       String?
-  lastContact DateTime?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  client      Client     @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  stage       LeadStage? @relation(fields: [stageId], references: [id])
-  messages    Message[]  // Histórico de conversa
+  id           String        @id @default(uuid())
+  clientId     String
+  stageId      String?
+  name         String
+  phone        String?
+  email        String?
+  value        Float?
+  notes        String?
+  lastContact  DateTime?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  tags         String?
+  priority     Priority      @default(MEDIUM)
+  origin       String?
   appointments Appointment[]
+  history      LeadHistory[]
+  client       Client        @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  stage        LeadStage?    @relation(fields: [stageId], references: [id])
+  messages     Message[]
   sales        Sale[]
 
   @@map("leads")
 }
 
-// Histórico de mensagens do Inbox
+model LeadHistory {
+  id        String   @id @default(uuid())
+  leadId    String
+  action    String
+  fromStage String?
+  toStage   String?
+  notes     String?
+  createdAt DateTime @default(now())
+  lead      Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@map("lead_history")
+}
+
 model Message {
   id        String   @id @default(uuid())
   leadId    String
   content   String
-  fromBot   Boolean  @default(false) // true = enviada pelo bot/cliente, false = recebida do lead
+  fromBot   Boolean  @default(false)
   createdAt DateTime @default(now())
-
   lead      Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
 
   @@map("messages")
 }
 
-// ─── Agenda e Agendamentos ─────────────────────────────────
 model Appointment {
-  id          String   @id @default(uuid())
-  clientId    String
-  leadId      String
-  date        DateTime // Data e hora marcadas
-  service     String?  // Serviço (ex: Corte de Cabelo, Consulta Odontológica)
-  price       Float?   // Preço estimado/confirmado
-  status      AppointmentStatus @default(PENDING)
-  notes       String?  @db.Text
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id            String            @id @default(uuid())
+  clientId      String
+  leadId        String?
+  customerName  String
+  customerPhone String?
+  duration      Int               @default(30)
+  origin        AppointmentOrigin @default(MANUAL)
+  date          DateTime
+  service       String?
+  price         Float?
+  status        AppointmentStatus @default(PENDING)
+  notes         String?
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
 
-  client      Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  lead        Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  client        Client            @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  lead          Lead?             @relation(fields: [leadId], references: [id])
 
   @@map("appointments")
 }
 
-// ─── Financeiro / Vendas ─────────────────────────────────
 model Sale {
-  id            String   @id @default(uuid())
+  id            String     @id @default(uuid())
   clientId      String
   leadId        String?
-  amount        Float    // Valor da venda
-  paymentMethod String?  // PIX, Cartão, Dinheiro
+  amount        Float
+  paymentMethod String?
   status        SaleStatus @default(COMPLETED)
   description   String?
-  date          DateTime @default(now()) // Data em que a venda ocorreu
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-
-  client        Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  lead          Lead?    @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  date          DateTime   @default(now())
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+  client        Client     @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  lead          Lead?      @relation(fields: [leadId], references: [id])
 
   @@map("sales")
 }
 
-// ─── Alertas ─────────────────────────────
 model Alert {
-  id        String      @id @default(uuid())
-  botId     String
-  clientId  String
-  userId    String?
-  severity  Severity    @default(ERROR)
-  title     String
-  message   String
-  status    AlertStatus @default(OPEN)
+  id         String      @id @default(uuid())
+  botId      String
+  clientId   String
+  userId     String?
+  severity   Severity    @default(ERROR)
+  title      String
+  message    String
+  status     AlertStatus @default(OPEN)
   resolvedAt DateTime?
-  createdAt DateTime    @default(now())
-  updatedAt DateTime    @updatedAt
-
-  bot    Bot     @relation(fields: [botId], references: [id], onDelete: Cascade)
-  client Client  @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  user   User?   @relation(fields: [userId], references: [id])
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+  bot        Bot         @relation(fields: [botId], references: [id], onDelete: Cascade)
+  client     Client      @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  user       User?       @relation(fields: [userId], references: [id])
 
   @@map("alerts")
 }
 
-// ─── Enums ────────────────────────────────────────────────
 enum Role {
-  ADMIN   // Você (Dono da plataforma)
-  CLIENT  // O cliente (Clínica/Barbearia)
-  VIEWER  // Funcionários do cliente
+  ADMIN
+  VIEWER
+  CLIENT
 }
 
 enum Plan {
@@ -304,8 +295,8 @@ enum AlertStatus {
 
 enum TriggerType {
   KEYWORD
-  DEFAULT // Mensagem padrão para qualquer texto caso não caia em keyword
-  ALWAYS  // Executa sempre
+  DEFAULT
+  ALWAYS
 }
 
 enum NodeType {
@@ -327,14 +318,14 @@ enum AIProvider {
   OPENAI
   ANTHROPIC
   DEEPSEEK
-  GEMINI
   CUSTOM
+  GEMINI
 }
 
 enum AppointmentStatus {
   PENDING
   CONFIRMED
-  CANCELLED
+  CANCELED
   COMPLETED
 }
 
@@ -343,4 +334,15 @@ enum SaleStatus {
   COMPLETED
   CANCELLED
   REFUNDED
+}
+
+enum Priority {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum AppointmentOrigin {
+  MANUAL
+  AI
 }

@@ -11,7 +11,7 @@ const middlewareAutenticacao = (req, res, next) => {
 
   try {
     const decodificado = jwt.verify(token, process.env.JWT_SECRET || 'super_secret_jwt_key_botmanager_2024');
-    req.usuarioId = decodificado.id;
+    req.usuario = decodificado;
     return next();
   } catch (erro) {
     return res.status(401).json({ erro: 'Token inválido' });

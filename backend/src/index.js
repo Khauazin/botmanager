@@ -12,6 +12,7 @@ const rotasCRM = require('./routes/crm.routes');
 const rotasBuilder = require('./routes/builder.routes');
 const rotasBotVariables = require('./routes/bot-variables.routes');
 const rotasUsuarios = require('./routes/usuarios.routes');
+const rotasAgenda = require('./routes/agenda.routes');
 
 const app = express();
 const servidor = http.createServer(app);
@@ -39,6 +40,7 @@ app.use('/alertas', rotasAlertas);
 app.use('/crm', rotasCRM);
 app.use('/builder', rotasBuilder);
 app.use('/bot-variables', rotasBotVariables);
+app.use('/agenda', rotasAgenda);
 
 // Rota de Teste de Saúde (Health Check)
 app.get('/saude', (req, res) => {

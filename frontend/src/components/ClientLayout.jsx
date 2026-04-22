@@ -1,12 +1,12 @@
 import { useState } from 'react';
 import { Outlet, NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { useAuthStore } from '../store/auth.store';
-import { 
-  LayoutDashboard, 
-  Users, 
-  Bot, 
-  BellRing, 
-  LogOut, 
+import {
+  LayoutDashboard,
+  Users,
+  Bot,
+  BellRing,
+  LogOut,
   Menu,
   Workflow,
   Kanban,
@@ -35,12 +35,12 @@ export default function ClientLayout() {
 
   return (
     <div className="min-h-screen bg-[#0a0a0a] text-gray-100 flex overflow-hidden">
-      
+
       {/* Background Glow */}
       <div className="fixed top-[-20%] left-[-10%] w-[50%] h-[50%] rounded-full bg-blue-900/10 blur-[150px] pointer-events-none" />
-      
+
       {/* Sidebar */}
-      <aside 
+      <aside
         className={clsx(
           "fixed inset-y-0 left-0 z-50 w-64 bg-black/40 backdrop-blur-xl border-r border-white/10 transition-transform duration-300 ease-in-out transform",
           !isSidebarOpen && "-translate-x-full"
@@ -62,8 +62,8 @@ export default function ClientLayout() {
               to={item.path}
               className={({ isActive }) => clsx(
                 "flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 group relative overflow-hidden",
-                isActive 
-                  ? "text-white bg-white/10 border border-white/10 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.1)]" 
+                isActive
+                  ? "text-white bg-white/10 border border-white/10 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.1)]"
                   : "text-gray-400 hover:text-white hover:bg-white/5"
               )}
             >
@@ -81,7 +81,7 @@ export default function ClientLayout() {
         </nav>
 
         <div className="absolute bottom-0 w-full p-4 border-t border-white/5 bg-black/20">
-          <button 
+          <button
             onClick={handleLogout}
             className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-gray-400 hover:text-red-400 hover:bg-red-500/10 transition-all duration-200 group"
           >
@@ -92,16 +92,16 @@ export default function ClientLayout() {
       </aside>
 
       {/* Main Content */}
-      <main 
+      <main
         className={clsx(
-          "flex-1 flex flex-col min-h-screen transition-all duration-300",
+          "flex-1 flex flex-col min-h-screen transition-all duration-300 overflow-hidden",
           isSidebarOpen ? "ml-64" : "ml-0"
         )}
       >
         {/* Topbar */}
-        <header className="h-20 bg-black/20 backdrop-blur-md border-b border-white/5 sticky top-0 z-40 px-8 flex items-center justify-between">
+        <header className="h-20 bg-transparent backdrop-blur-sm border-b border-white/0 sticky top-0 z-10 px-8 flex items-center justify-between">
           <div className="flex items-center gap-4">
-            <button 
+            <button
               onClick={() => setIsSidebarOpen(!isSidebarOpen)}
               className="p-2 rounded-lg hover:bg-white/10 text-gray-400 hover:text-white transition-colors"
             >
@@ -124,7 +124,7 @@ export default function ClientLayout() {
         </header>
 
         {/* Page Content */}
-        <div className="flex-1 p-8 relative z-10 overflow-y-auto">
+        <div className="flex-1 p-8 relative overflow-hidden" style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
           <Outlet />
         </div>
       </main>

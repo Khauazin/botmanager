@@ -153,6 +153,44 @@ async function main() {
     skipDuplicates: true
   });
   console.log(`✅ Fluxo "${fluxo.name}" criado com 3 nós e 2 conexões`);
+  
+  // ─── 8. Criar Agendamentos de Exemplo ─────────────
+  const hoje = new Date();
+  hoje.setHours(10, 0, 0, 0); // Hoje às 10h
+
+  const amanha = new Date();
+  amanha.setDate(amanha.getDate() + 1);
+  amanha.setHours(14, 30, 0, 0); // Amanhã às 14:30
+
+  // Pega um lead qualquer para associar
+  const umLead = await prisma.lead.findFirst();
+
+  await prisma.appointment.createMany({
+    data: [
+      {
+        clientId: cliente.id,
+        leadId: umLead?.id,
+        customerName: 'Maria Silva',
+        customerPhone: '11988776655',
+        service: 'Consulta Odontológica',
+        date: hoje,
+        duration: 60,
+        price: 250,
+        status: 'CONFIRMED'
+      },
+      {
+        clientId: cliente.id,
+        customerName: 'Cliente Avulso',
+        customerPhone: '11900000000',
+        service: 'Limpeza',
+        date: amanha,
+        duration: 30,
+        price: 150,
+        status: 'PENDING'
+      }
+    ]
+  });
+  console.log('✅ Agendamentos de exemplo criados');
 
   console.log('\n🎉 Seed concluído com sucesso!');
   console.log('────────────────────────────────────');
