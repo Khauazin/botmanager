@@ -19,6 +19,8 @@ import BotSettingsPage from './pages/BotSettingsPage';
 import ClientDashboardPage from './pages/ClientDashboardPage';
 import AgendaPage from './pages/AgendaPage';
 import FinanceiroPage from './pages/FinanceiroPage';
+import CatalogoPage from './pages/CatalogoPage';
+import EstoquePage from './pages/EstoquePage';
 
 // Placeholder para as páginas que ainda vamos criar
 const EmConstrucao = ({ titulo }) => (
@@ -102,6 +104,8 @@ export default function App() {
           <Route path="/app/dashboard" element={<ClientDashboardPage />} />
           <Route path="/app/crm" element={<CRMPage />} />
           <Route path="/app/agenda" element={<AgendaPage />} />
+          <Route path="/app/catalogo" element={<CatalogoPage />} />
+          <Route path="/app/estoque" element={<EstoquePage />} />
           <Route path="/app/financeiro" element={<FinanceiroPage />} />
           <Route path="/app/configuracoes" element={<BotSettingsPage />} />
         </Route>

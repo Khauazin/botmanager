@@ -24,24 +24,27 @@ model User {
 }
 
 model Client {
-  id           String        @id @default(uuid())
-  name         String
-  email        String?
-  phone        String?
-  segment      String?
-  plan         Plan          @default(BASIC)
-  status       ClientStatus  @default(ACTIVE)
-  monthlyFee   Float         @default(0)
-  notes        String?
-  createdAt    DateTime      @default(now())
-  updatedAt    DateTime      @updatedAt
-  alerts       Alert[]
-  appointments Appointment[]
-  bots         Bot[]
-  leadStages   LeadStage[]
-  leads        Lead[]
-  sales        Sale[]
-  users        User[]
+  id                   String                @id @default(uuid())
+  name                 String
+  email                String?
+  phone                String?
+  segment              String?
+  plan                 Plan                  @default(BASIC)
+  status               ClientStatus          @default(ACTIVE)
+  monthlyFee           Float                 @default(0)
+  notes                String?
+  createdAt            DateTime              @default(now())
+  updatedAt            DateTime              @updatedAt
+  alerts               Alert[]
+  appointments         Appointment[]
+  bots                 Bot[]
+  leadStages           LeadStage[]
+  leads                Lead[]
+  sales                Sale[]
+  users                User[]
+  produtos             Produto[]
+  lancamentosFinanceiros LancamentoFinanceiro[]
+  categoriasFinanceiras CategoriaFinanceira[]
 
   @@map("clients")
 }
@@ -143,26 +146,27 @@ model LeadStage {
 }
 
 model Lead {
-  id           String        @id @default(uuid())
-  clientId     String
-  stageId      String?
-  name         String
-  phone        String?
-  email        String?
-  value        Float?
-  notes        String?
-  lastContact  DateTime?
-  createdAt    DateTime      @default(now())
-  updatedAt    DateTime      @updatedAt
-  tags         String?
-  priority     Priority      @default(MEDIUM)
-  origin       String?
-  appointments Appointment[]
-  history      LeadHistory[]
-  client       Client        @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  stage        LeadStage?    @relation(fields: [stageId], references: [id])
-  messages     Message[]
-  sales        Sale[]
+  id                   String                 @id @default(uuid())
+  clientId             String
+  stageId              String?
+  name                 String
+  phone                String?
+  email                String?
+  value                Float?
+  notes                String?
+  lastContact          DateTime?
+  createdAt            DateTime               @default(now())
+  updatedAt            DateTime               @updatedAt
+  tags                 String?
+  priority             Priority               @default(MEDIUM)
+  origin               String?
+  appointments         Appointment[]
+  history              LeadHistory[]
+  client               Client                 @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  stage                LeadStage?             @relation(fields: [stageId], references: [id])
+  messages             Message[]
+  sales                Sale[]
+  lancamentosFinanceiros LancamentoFinanceiro[]
 
   @@map("leads")
 }
@@ -207,27 +211,124 @@ model Appointment {
   createdAt     DateTime          @default(now())
   updatedAt     DateTime          @updatedAt
 
-  client        Client            @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  lead          Lead?             @relation(fields: [leadId], references: [id])
+  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  lead   Lead?  @relation(fields: [leadId], references: [id])
 
   @@map("appointments")
 }
 
 model Sale {
-  id            String     @id @default(uuid())
-  clientId      String
-  leadId        String?
-  amount        Float
-  paymentMethod String?
-  status        SaleStatus @default(COMPLETED)
-  description   String?
-  date          DateTime   @default(now())
-  createdAt     DateTime   @default(now())
-  updatedAt     DateTime   @updatedAt
-  client        Client     @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  lead          Lead?      @relation(fields: [leadId], references: [id])
+  id                   String                @id @default(uuid())
+  clientId             String
+  leadId               String?
+  amount               Float
+  paymentMethod        String?
+  status               SaleStatus            @default(COMPLETED)
+  description          String?
+  date                 DateTime              @default(now())
+  createdAt            DateTime              @default(now())
+  updatedAt            DateTime              @updatedAt
+  client               Client                @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  lead                 Lead?                 @relation(fields: [leadId], references: [id])
+  lancamentosFinanceiros LancamentoFinanceiro[]
+  movimentacoesEstoque MovimentacaoEstoque[]
 
   @@map("sales")
+}
+
+// ==========================================
+// MÓDULO DE CATÁLOGO
+// ==========================================
+
+model Produto {
+  id            String              @id @default(uuid())
+  clientId      String
+  nome          String
+  descricao     String?
+  tipo          TipoProduto         @default(FISICO)
+  visibilidade  VisibilidadeProduto @default(ATIVO)
+  estoqueMinimo Int?                @default(0)
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+
+  client    Client            @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  variacoes VariacaoProduto[]
+
+  @@map("produtos")
+}
+
+model VariacaoProduto {
+  id           String   @id @default(uuid())
+  produtoId    String
+  nome         String // Ex: "Tamanho P", "Cor Azul"
+  sku          String?  @unique
+  preco        Float
+  estoqueAtual Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  produto       Produto               @relation(fields: [produtoId], references: [id], onDelete: Cascade)
+  movimentacoes MovimentacaoEstoque[]
+
+  @@map("variacoes_produto")
+}
+
+// ==========================================
+// MÓDULO DE ESTOQUE
+// ==========================================
+
+model MovimentacaoEstoque {
+  id         String           @id @default(uuid())
+  variacaoId String
+  tipo       TipoMovimentacao
+  quantidade Int // Positivo para entrada, negativo para saída
+  motivo     String?
+  vendaId    String?
+  data       DateTime         @default(now())
+
+  variacao VariacaoProduto @relation(fields: [variacaoId], references: [id], onDelete: Cascade)
+  venda    Sale?           @relation(fields: [vendaId], references: [id])
+
+  @@map("movimentacoes_estoque")
+}
+
+// ==========================================
+// MÓDULO FINANCEIRO
+// ==========================================
+
+model LancamentoFinanceiro {
+  id             String           @id @default(uuid())
+  clientId       String
+  leadId         String?
+  vendaId        String?
+  categoriaId    String?
+  descricao      String
+  valor          Float
+  tipo           TipoLancamento
+  status         StatusFinanceiro @default(PENDENTE)
+  dataVencimento DateTime
+  dataPagamento  DateTime?
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  client    Client               @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  lead      Lead?                @relation(fields: [leadId], references: [id])
+  venda     Sale?                @relation(fields: [vendaId], references: [id])
+  categoria CategoriaFinanceira? @relation(fields: [categoriaId], references: [id])
+
+  @@map("lancamentos_financeiros")
+}
+
+model CategoriaFinanceira {
+  id       String         @id @default(uuid())
+  clientId String
+  nome     String
+  tipo     TipoLancamento
+
+  client      Client                 @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  lancamentos LancamentoFinanceiro[]
+
+  @@map("categorias_financeiras")
 }
 
 model Alert {
@@ -248,6 +349,10 @@ model Alert {
 
   @@map("alerts")
 }
+
+// ==========================================
+// ENUMS
+// ==========================================
 
 enum Role {
   ADMIN
@@ -345,4 +450,35 @@ enum Priority {
 enum AppointmentOrigin {
   MANUAL
   AI
+}
+
+enum VisibilidadeProduto {
+  ATIVO
+  PAUSADO
+  ARQUIVADO
+}
+
+enum TipoProduto {
+  FISICO
+  SERVICO
+}
+
+enum TipoMovimentacao {
+  VENDA
+  AJUSTE
+  DEVOLUCAO
+  COMPRA_FORNECEDOR
+  RESERVA
+}
+
+enum StatusFinanceiro {
+  PENDENTE
+  PAGO
+  ATRASADO
+  CANCELADO
+}
+
+enum TipoLancamento {
+  RECEITA
+  DESPESA
 }

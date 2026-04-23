@@ -10,7 +10,11 @@ import {
   Menu,
   Workflow,
   Kanban,
-  Settings
+  Settings,
+  Calendar,
+  DollarSign,
+  Package,
+  Box
 } from 'lucide-react';
 import clsx from 'clsx';
 
@@ -28,8 +32,10 @@ export default function ClientLayout() {
   const navItems = [
     { path: '/app/dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { path: '/app/crm', label: 'CRM / Inbox', icon: Kanban },
-    { path: '/app/agenda', label: 'Agenda', icon: Workflow }, // we'll change icon later
-    { path: '/app/financeiro', label: 'Financeiro', icon: Users }, // we'll change icon later
+    { path: '/app/agenda', label: 'Agenda', icon: Calendar },
+    { path: '/app/catalogo', label: 'Catálogo', icon: Package },
+    { path: '/app/estoque', label: 'Estoque', icon: Box },
+    { path: '/app/financeiro', label: 'Financeiro', icon: DollarSign },
     { path: '/app/configuracoes', label: 'Ajustes', icon: Settings }
   ];
 
