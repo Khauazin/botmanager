@@ -16,8 +16,6 @@ export const ROTULO_CAMPO = {
   apiKey: 'API key',
   secretKey: 'Secret key',
   token: 'Token',
-  phoneNumberId: 'Phone number ID',
-  businessAccountId: 'Business account ID',
   webhookSecret: 'Webhook secret',
 };
 

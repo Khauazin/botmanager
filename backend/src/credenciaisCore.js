@@ -29,8 +29,15 @@ const CATEGORIA_POR_TIPO = {
 
 // Schema esperado de `dados` por tipo. Os nomes dos campos batem com o que cada
 // adapter lê (adapters/pagamento, adapters/fiscal) — não renomear sem ajustar lá.
+//
+// WHATSAPP_CLOUD_TOKEN so pede o accessToken: phoneNumberId e businessAccountId
+// chegaram a fazer parte do schema, mas nenhum adapter os lia (whatsappCloud.js
+// recebe o phoneNumberId do proprio payload da mensagem recebida, nao da
+// credencial). Pedir os dois so aumentava a chance de erro de digitacao sem
+// nenhum efeito real. O identificador que de fato importa pro roteamento —
+// qual numero pertence a qual bot — vive em Bot.identificadorCanal.
 const SCHEMA_POR_TIPO = {
-  WHATSAPP_CLOUD_TOKEN: { obrigatorios: ['accessToken', 'phoneNumberId'], opcionais: ['businessAccountId'] },
+  WHATSAPP_CLOUD_TOKEN: { obrigatorios: ['accessToken'], opcionais: [] },
   MERCADO_PAGO_KEY: { obrigatorios: ['accessToken'], opcionais: ['webhookSecret'] },
   ASAAS_KEY: { obrigatorios: ['apiKey'], opcionais: ['webhookSecret'] },
   PAGARME_KEY: { obrigatorios: ['secretKey'], opcionais: ['webhookSecret'] },
