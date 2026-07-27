@@ -8,8 +8,8 @@ export async function listar() {
   return r.data;
 }
 
-export async function criar({ pergunta, resposta, ordem, ativo }) {
-  const r = await api.post('/faq', { pergunta, resposta, ordem, ativo });
+export async function criar({ pergunta, resposta, ordem, ativo, palavrasChave }) {
+  const r = await api.post('/faq', { pergunta, resposta, ordem, ativo, palavrasChave });
   return r.data;
 }
 

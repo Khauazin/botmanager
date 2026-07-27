@@ -96,7 +96,12 @@ export default function BotCanalPage() {
 
   const credenciaisDoCanal = credenciais.filter((c) => c.tipo === 'WHATSAPP_CLOUD_TOKEN');
 
-  const urlReceiver = `${urlPublica()}/canais/whatsapp/${botId}`;
+  // Precisa bater EXATAMENTE com a montagem do backend: index.js faz
+  // `app.use('/webhooks', rotasWebhooksWhatsapp)` e o handler responde em
+  // '/whatsapp'. Nao existe segmento de botId — quem identifica o bot e o
+  // verify token (na verificacao) e o phone_number_id (nas mensagens).
+  // Qualquer coisa fora disso devolve 404 e a Meta recusa o endpoint.
+  const urlReceiver = `${urlPublica()}/webhooks/whatsapp`;
 
   return (
     <div className="space-y-5">
@@ -153,11 +158,11 @@ export default function BotCanalPage() {
           />
 
           <Input
-            label="Phone Number ID (opcional)"
+            label="Phone Number ID"
             value={form.identificadorCanal}
             onChange={(e) => setForm({ ...form, identificadorCanal: e.target.value })}
-            placeholder="Pode vir tambem da credencial"
-            hint="Se a credencial ja contem phoneNumberId, deixe vazio."
+            placeholder="Ex: 1290672074119010"
+            hint="Vem do painel da Meta (Identificacao do numero de telefone). Obrigatorio: sem ele, mensagens recebidas nao chegam a nenhum bot."
           />
 
           <Select

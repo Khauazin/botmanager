@@ -182,6 +182,11 @@ export default function ModalIntegracoes({ isOpen, onClose, cliente }) {
                             <div className="flex items-center gap-1.5 text-[11px] text-[var(--text-muted)]">
                               <Lock size={12} /> A chave é cifrada no cofre e nunca volta pela tela.
                             </div>
+                            {t.tipo === 'WHATSAPP_CLOUD_TOKEN' && (
+                              <div className="text-[11px] text-[var(--text-muted)]">
+                                O número do canal (phoneNumberId) e o verify token ficam na tela do bot, não aqui.
+                              </div>
+                            )}
                             <div className="flex justify-end gap-2">
                               <Button variant="secondary" size="sm" onClick={() => setEditando(null)}>Cancelar</Button>
                               <Button variant="primary" size="sm" onClick={salvar} loading={salvando}>Salvar</Button>

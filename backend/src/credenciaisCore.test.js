@@ -41,3 +41,11 @@ test('categoria mapeada pra agrupar na UI', () => {
   assert.equal(CATEGORIA_POR_TIPO.NUVEM_FISCAL_KEY, 'Fiscal');
   assert.equal(CATEGORIA_POR_TIPO.WHATSAPP_CLOUD_TOKEN, 'WhatsApp');
 });
+
+test('WhatsApp so exige o accessToken — phoneNumberId nao e lido por nenhum adapter', () => {
+  // Regressao: phoneNumberId/businessAccountId chegaram a ser pedidos aqui, mas
+  // o roteamento de verdade usa Bot.identificadorCanal, nunca a credencial. Pedir
+  // de novo so recria a confusao (dois lugares pro mesmo dado, um deles morto).
+  assert.ok(validarPayload('WHATSAPP_CLOUD_TOKEN', { accessToken: 'EAAxyz' }).ok);
+  assert.ok(validarPayload('WHATSAPP_CLOUD_TOKEN', {}).erro);
+});

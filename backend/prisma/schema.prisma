@@ -985,14 +985,18 @@ model DocumentoFiscalItem {
 // Usado pela Frente 4 no roteador de menu fixo do WhatsApp.
 
 model Faq {
-  id           String   @id @default(uuid())
-  clienteId    String
-  pergunta     String
-  resposta     String
-  ordem        Int      @default(0)
-  ativo        Boolean  @default(true)
-  criadoEm     DateTime @default(now())
-  atualizadoEm DateTime @updatedAt
+  id            String   @id @default(uuid())
+  clienteId     String
+  pergunta      String
+  resposta      String
+  // Alem da pergunta, o bot tambem casa por estas palavras (normalizadas,
+  // sem acento/caixa) — ver services/botRouter.js. Resolve o problema de o
+  // cliente digitar algo que nao bate literalmente com a pergunta cadastrada.
+  palavrasChave String[] @default([])
+  ordem         Int      @default(0)
+  ativo         Boolean  @default(true)
+  criadoEm      DateTime @default(now())
+  atualizadoEm  DateTime @updatedAt
 
   cliente Cliente @relation(fields: [clienteId], references: [id], onDelete: Cascade)
 

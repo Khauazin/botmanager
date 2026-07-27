@@ -1,12 +1,9 @@
 // Cofre de credenciais (chaves de API). Cifra um objeto JSON com formato livre
-// por tipo, ex.:
-//   OPENAI_API_KEY        -> { apiKey, organizationId? }
-//   ANTHROPIC_API_KEY     -> { apiKey }
-//   WHATSAPP_CLOUD_TOKEN  -> { accessToken, phoneNumberId, businessAccountId }
-//   HTTP_BEARER           -> { token }
-//   HTTP_BASIC            -> { usuario, senha }
-//   HTTP_API_KEY          -> { headerName, key }
-//   OUTRO                 -> { ... }  (livre)
+// por tipo — a lista de tipos validos e o schema de cada um vivem em
+// credenciaisCore.js (fonte unica), ex.:
+//   WHATSAPP_CLOUD_TOKEN  -> { accessToken }
+//   MERCADO_PAGO_KEY      -> { accessToken, webhookSecret? }
+//   FOCUS_NFE_KEY         -> { token }
 //
 // O proprio JSON serializado e cifrado em AES-256-GCM com chave derivada do
 // tenant via HKDF (cofre.js).

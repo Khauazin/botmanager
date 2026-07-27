@@ -61,16 +61,30 @@ function montarResposta({ texto, faqs }) {
     }
   }
 
-  // Casamento por texto na pergunta (contains, nos dois sentidos).
   const t = norm(texto);
+  const palavrasDoTexto = t.split(/\s+/).filter(Boolean);
+
+  // Casamento por palavra-chave: sinal deliberado de quem cadastrou a FAQ, por
+  // isso vem antes do casamento frouxo por texto da pergunta. Palavra-chave de
+  // uma palavra so bate por palavra inteira (evita "oi" casar dentro de "hoje");
+  // frase com mais de uma palavra bate por substring, como as perguntas.
+  const porPalavraChave = ativos.find((f) => (f.palavrasChave || []).some((chave) => {
+    const c = norm(chave);
+    if (!c) return false;
+    return c.includes(' ') ? t.includes(c) : palavrasDoTexto.includes(c);
+  }));
+  if (porPalavraChave) return { texto: porPalavraChave.resposta };
+
+  // Casamento por texto na pergunta (contains, nos dois sentidos).
   const achou = ativos.find((f) => {
     const p = norm(f.pergunta);
     return p.includes(t) || t.includes(p);
   });
   if (achou) return { texto: achou.resposta };
 
-  // Fallback.
-  return { texto: 'Nao entendi. Responda "menu" para ver as opcoes disponiveis.' };
+  // Fallback: nunca fica mudo — reoferece o menu junto, em vez de so dizer que
+  // nao entendeu e deixar o cliente sem saber o que fazer.
+  return { texto: `Nao entendi. Aqui estao as opcoes:\n\n${montarMenu(ativos)}` };
 }
 
 module.exports = { montarResposta, montarMenu, ehSaudacao, norm };
