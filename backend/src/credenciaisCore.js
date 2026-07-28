@@ -15,6 +15,7 @@ const TIPOS_VALIDOS = new Set([
   'PAGARME_KEY',
   'FOCUS_NFE_KEY',
   'NUVEM_FISCAL_KEY',
+  'DEEPSEEK_KEY',
 ]);
 
 // Categoria pra agrupar na tela (admin + cliente).
@@ -25,6 +26,7 @@ const CATEGORIA_POR_TIPO = {
   FOCUS_NFE_KEY: 'Fiscal',
   NUVEM_FISCAL_KEY: 'Fiscal',
   WHATSAPP_CLOUD_TOKEN: 'WhatsApp',
+  DEEPSEEK_KEY: 'IA',
 };
 
 // Schema esperado de `dados` por tipo. Os nomes dos campos batem com o que cada
@@ -43,6 +45,10 @@ const SCHEMA_POR_TIPO = {
   PAGARME_KEY: { obrigatorios: ['secretKey'], opcionais: ['webhookSecret'] },
   FOCUS_NFE_KEY: { obrigatorios: ['token'], opcionais: [] },
   NUVEM_FISCAL_KEY: { obrigatorios: ['accessToken'], opcionais: [] },
+  // Credencial de PLATAFORMA (uma so, da Sellergy — nao do tenant). Nao passa
+  // pela rota /admin/clientes/:id/credenciais como as demais; tem rota propria
+  // (admin-credencial-ia.routes.js) porque nao pertence a nenhum cliente.
+  DEEPSEEK_KEY: { obrigatorios: ['apiKey'], opcionais: [] },
 };
 
 const TAM_MAX_NOME = 120;

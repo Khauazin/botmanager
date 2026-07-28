@@ -10,7 +10,21 @@
 // (best-effort, nao bloqueia o uso).
 
 const prisma = require('./prisma');
-const { decifrarPayload } = require('./cripto/cofreCredenciais');
+const { cifrarPayload, decifrarPayload } = require('./cripto/cofreCredenciais');
+
+// Contexto fixo de derivacao pra credencial de PLATAFORMA (ex.: a chave da
+// DeepSeek — uma so, da Sellergy, nao de um tenant). O parametro "clienteId"
+// que cifrarPayload/decifrarPayload recebem e usado como contexto de
+// derivacao HKDF (nao precisa ser segredo, so precisa ser estavel e unico
+// pra esse dominio — HKDF.info e publico por design, a seguranca vem da
+// master key). Nao reaproveita nenhum clienteId real: uma string fixa que
+// nunca colide com um UUID de tenant.
+//
+// Isolado deste jeito, em vez de reabrir o caminho "clienteId null" em
+// carregarCredencialDecifrada(), porque aquele foi fechado de proposito no
+// pivo (comentario ali: "credenciais de plataforma foram removidas") — nao
+// quero reabrir uma trava geral pra resolver um caso especifico.
+const CONTEXTO_PLATAFORMA = 'sellergy-plataforma-v1';
 
 async function carregarCredencialDecifrada({ credencialId, clienteId }) {
   if (!credencialId) return null;
@@ -39,6 +53,56 @@ async function carregarCredencialDecifrada({ credencialId, clienteId }) {
     .catch((e) => console.error('[credencial/stats]', e?.message || e));
 
   return { tipo: credencial.tipo, nome: credencial.nome, dados };
+}
+
+/**
+ * Carrega a UNICA credencial de plataforma de um tipo (ex.: DEEPSEEK_KEY).
+ * Diferente de carregarCredencialDecifrada: nao recebe id nem clienteId —
+ * a credencial de plataforma nao pertence a nenhum tenant, entao a busca e
+ * so pelo tipo, com clienteId IS NULL.
+ */
+async function carregarCredencialPlataforma(tipo) {
+  const credencial = await prisma.credencial.findFirst({
+    where: { clienteId: null, tipo },
+    orderBy: { criadoEm: 'desc' },
+  });
+  if (!credencial) return null;
+
+  let dados;
+  try {
+    dados = decifrarPayload(CONTEXTO_PLATAFORMA, credencial);
+  } catch (err) {
+    throw new Error(`Falha ao decifrar credencial de plataforma (${tipo}): ${err.message}`);
+  }
+
+  prisma.credencial
+    .update({ where: { id: credencial.id }, data: { ultimoUsoEm: new Date() } })
+    .catch((e) => console.error('[credencial-plataforma/stats]', e?.message || e));
+
+  return { id: credencial.id, tipo: credencial.tipo, nome: credencial.nome, dados };
+}
+
+/**
+ * Cria ou atualiza a UNICA credencial de plataforma de um tipo. Usado pela
+ * rota admin (admin-credencial-ia.routes.js) — nunca exposta ao tenant.
+ */
+async function salvarCredencialPlataforma({ tipo, nome, payload, criadoPorId }) {
+  const cifrado = cifrarPayload(CONTEXTO_PLATAFORMA, payload);
+  const existente = await prisma.credencial.findFirst({ where: { clienteId: null, tipo } });
+
+  const data = {
+    nome,
+    tipo,
+    dadosCifrados: cifrado.conteudoCifrado,
+    iv: cifrado.iv,
+    tag: cifrado.tag,
+    versaoChave: cifrado.versaoChave,
+  };
+
+  if (existente) {
+    return prisma.credencial.update({ where: { id: existente.id }, data });
+  }
+  return prisma.credencial.create({ data: { ...data, clienteId: null, criadoPorId: criadoPorId || null } });
 }
 
 // Aplica a credencial ao objeto de cabecalhos HTTP conforme o tipo.
@@ -81,5 +145,7 @@ function aplicarCredencialEmCabecalhos(cabecalhos, credencialDecifrada) {
 
 module.exports = {
   carregarCredencialDecifrada,
+  carregarCredencialPlataforma,
+  salvarCredencialPlataforma,
   aplicarCredencialEmCabecalhos,
 };

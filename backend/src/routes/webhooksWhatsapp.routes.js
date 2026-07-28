@@ -2,9 +2,10 @@
 // quem chama e a Meta, nao um usuario logado.
 //   GET  /webhooks/whatsapp  -> verificacao do endpoint (ecoa hub.challenge se
 //        o verify token casar com algum bot conectado).
-//   POST /webhooks/whatsapp  -> mensagens recebidas -> roteador de menu fixo
-//        (botRouter, sem IA) -> resposta via whatsappCloud (DRY_RUN ate o App
-//        Review da Meta). Ref: erp-arquitetura-e-operacao.md §6.
+//   POST /webhooks/whatsapp  -> mensagens recebidas -> iaRouter decide entre
+//        IA (DeepSeek, se bot.iaAtiva) e o roteador de menu fixo (botRouter)
+//        -> resposta via whatsappCloud (DRY_RUN ate o App Review da Meta).
+//        Ref: erp-arquitetura-e-operacao.md §6.
 //
 // Arquivo proprio (nao o webhooks.routes.js de pagamento) pra as Frentes 2 e 4
 // nao colidirem no mesmo arquivo. Montado em /webhooks no index.js.
@@ -14,7 +15,7 @@
 
 const express = require('express');
 const prisma = require('../prisma');
-const { montarResposta } = require('../services/botRouter');
+const { montarRespostaBot } = require('../services/iaRouter');
 const { enviarTexto } = require('../services/whatsappCloud');
 const { carregarCredencialDecifrada } = require('../credenciais');
 
@@ -55,11 +56,17 @@ roteador.post('/whatsapp', async (req, res) => {
 
         const bot = await prisma.bot.findFirst({
           where: { identificadorCanal: String(phoneNumberId) },
-          select: { id: true, clienteId: true, credencialCanalId: true },
+          select: {
+            id: true, clienteId: true, credencialCanalId: true,
+            iaAtiva: true, iaModelo: true, iaPromptSistema: true,
+            iaTokensIncluidosMes: true, iaPrecoPorMilTokensExcedenteCentavos: true,
+          },
         });
         if (!bot) continue;
 
-        const faqs = await prisma.faq.findMany({
+        // So carrega FAQ se o bot nao estiver no modo IA — economiza uma
+        // query que o motor de decisao nem vai usar.
+        const faqs = bot.iaAtiva ? [] : await prisma.faq.findMany({
           where: { clienteId: bot.clienteId, ativo: true },
           orderBy: { ordem: 'asc' },
         });
@@ -74,7 +81,7 @@ roteador.post('/whatsapp', async (req, res) => {
         for (const msg of mensagens) {
           const de = msg.from;
           const texto = msg.text?.body || msg.button?.text || msg.interactive?.list_reply?.title || '';
-          const resposta = montarResposta({ texto, faqs });
+          const resposta = await montarRespostaBot({ bot, texto, faqs });
           if (resposta?.texto) {
             await enviarTexto({ phoneNumberId, token, para: de, texto: resposta.texto });
           }

@@ -44,11 +44,16 @@ async function credencialDoTenant(id, usuario) {
 // ==========================================
 roteador.get('/tipos', (req, res) => {
   res.json(
-    Array.from(TIPOS_VALIDOS).map((tipo) => ({
-      tipo,
-      categoria: CATEGORIA_POR_TIPO[tipo] || 'Outro',
-      schema: SCHEMA_POR_TIPO[tipo],
-    }))
+    Array.from(TIPOS_VALIDOS)
+      // DEEPSEEK_KEY e credencial de PLATAFORMA (uma so, da Sellergy) — nao
+      // aparece aqui pra nao ser criada por engano escopada a um cliente.
+      // Cadastro fica em /admin/plataforma/credencial-ia.
+      .filter((tipo) => tipo !== 'DEEPSEEK_KEY')
+      .map((tipo) => ({
+        tipo,
+        categoria: CATEGORIA_POR_TIPO[tipo] || 'Outro',
+        schema: SCHEMA_POR_TIPO[tipo],
+      }))
   );
 });
 

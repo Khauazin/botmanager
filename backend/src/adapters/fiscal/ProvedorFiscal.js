@@ -12,6 +12,8 @@
 // (consultarStatus ate) EMITIDA | ERRO. Todo metodo devolve um DTO normalizado
 // no vocabulario do model `DocumentoFiscal` (status do enum StatusDocumentoFiscal).
 
+const { fetchComRetentativa } = require('../../utils/httpSeguro');
+
 /**
  * Status normalizado (espelha o enum `DocumentoFiscal.status`).
  * @typedef {'PENDENTE'|'PROCESSANDO'|'EMITIDA'|'ERRO'|'CANCELADA'} StatusDoc
@@ -77,7 +79,8 @@ class ProvedorFiscal {
   async _executar(req, fixture) {
     if (this.modo === 'fixture') return fixture();
 
-    const resp = await fetch(req.url, {
+    // Timeout + retentativa com backoff (429/5xx) — ver utils/httpSeguro.js.
+    const resp = await fetchComRetentativa(req.url, {
       method: req.metodo || 'GET',
       headers: { 'content-type': 'application/json', ...(req.headers || {}) },
       body: req.corpo ? JSON.stringify(req.corpo) : undefined,

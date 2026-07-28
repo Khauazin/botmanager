@@ -2,26 +2,17 @@ import { useState, useEffect, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import {
   Plus, Bot, Edit2, Trash2, MoreHorizontal, Wifi, WifiOff, AlertCircle,
-  Sparkles, Workflow, Copy, MessageCircle, Wrench, KeyRound, Settings
+  Sparkles, Copy, MessageCircle,
 } from 'lucide-react';
 import api from '../services/api';
 import {
-  Card, Button, IconButton, Input, Textarea, Select, Badge,
+  Card, Button, IconButton, Input, Select, Badge, Switch,
   EmptyState, SearchBar, Drawer, Dropdown, DropdownItem, DropdownDivider, useToast,
   Combobox, KpiCard,
 } from '../components/ui';
 import Modal from '../components/Modal';
 import { formatarTelefoneIntl } from '../utils/formatTelefone';
-import credenciaisService from '../services/credenciaisService';
-
-// Espelha TIPO_POR_PROVEDOR do backend (bots.routes.js). Mantém sincronizado.
-const TIPO_CREDENCIAL_POR_PROVEDOR = {
-  OPENAI: 'OPENAI_API_KEY',
-  ANTHROPIC: 'ANTHROPIC_API_KEY',
-  GEMINI: 'GEMINI_API_KEY',
-  DEEPSEEK: 'HTTP_API_KEY',
-  CUSTOM: null,
-};
+import adminCredencialIAService from '../services/adminCredencialIAService';
 
 const STATUS_LABELS = {
   ONLINE: { label: 'Online', variant: 'success', icon: Wifi },
@@ -33,12 +24,10 @@ const CANAIS = [
   { value: 'WHATSAPP', label: 'WhatsApp' },
 ];
 
-const PROVEDORES = [
-  { value: 'OPENAI', label: 'OpenAI (GPT)' },
-  { value: 'ANTHROPIC', label: 'Anthropic (Claude)' },
-  { value: 'GEMINI', label: 'Google Gemini' },
-  { value: 'DEEPSEEK', label: 'DeepSeek' },
-  { value: 'CUSTOM', label: 'Custom' },
+// Espelha MODELOS_VALIDOS do backend (adapters/ia/deepseek.js).
+const MODELOS_IA = [
+  { value: 'deepseek-v4-flash', label: 'Rapido e economico (deepseek-v4-flash)' },
+  { value: 'deepseek-v4-pro', label: 'Avancado (deepseek-v4-pro)' },
 ];
 
 export default function BotsPage() {
@@ -263,78 +252,77 @@ export default function BotsPage() {
 
 // Kpi local removido — usa KpiCard compartilhado do ui/.
 
+// Converte entre a unidade que o backend guarda (centavos, inteiro — evita
+// erro de arredondamento de float) e a que a pessoa digita (reais).
+const centavosParaReais = (c) => ((Number(c) || 0) / 100).toFixed(2);
+const reaisParaCentavos = (r) => Math.round((parseFloat(r) || 0) * 100);
+
+const FORM_VAZIO = {
+  nome: '', clienteId: '', canal: 'WHATSAPP', telefone: '',
+  iaAtiva: false, iaModelo: 'deepseek-v4-flash',
+  iaTokensIncluidosMes: 100000, iaPrecoPorMilTokensExcedente: '0.08',
+};
+
 function ModalBot({ isOpen, onClose, bot, clientes, onSalvar }) {
-  const [form, setForm] = useState({
-    nome: '', clienteId: '', canal: 'WHATSAPP', telefone: '',
-    provedorIa: 'OPENAI', modeloIa: 'gpt-4o-mini', promptSistemaIa: '', temperaturaIa: 0.7, credencialIaId: '',
-  });
-  const [credenciais, setCredenciais] = useState([]);
-  const [carregandoCredenciais, setCarregandoCredenciais] = useState(false);
+  const toast = useToast();
+  const [form, setForm] = useState(FORM_VAZIO);
+  const [chaveIA, setChaveIA] = useState(''); // valor novo digitado (vazio = manter a atual)
+  const [chaveIAConfigurada, setChaveIAConfigurada] = useState(null); // null = carregando
+  const [salvandoChave, setSalvandoChave] = useState(false);
 
   useEffect(() => {
-    if (bot) setForm({
-      ...bot,
-      telefone: bot.telefone || '',
-      modeloIa: bot.modeloIa || 'gpt-4o-mini',
-      promptSistemaIa: bot.promptSistemaIa || '',
-      temperaturaIa: bot.temperaturaIa ?? 0.7,
-      credencialIaId: bot.credencialIaId || '',
-    });
-    else setForm({
-      nome: '', clienteId: '', canal: 'WHATSAPP', telefone: '',
-      provedorIa: 'OPENAI', modeloIa: 'gpt-4o-mini', promptSistemaIa: '', temperaturaIa: 0.7, credencialIaId: '',
-    });
+    if (bot) {
+      setForm({
+        ...bot,
+        telefone: bot.telefone || '',
+        iaAtiva: bot.iaAtiva ?? false,
+        iaModelo: bot.iaModelo || 'deepseek-v4-flash',
+        iaTokensIncluidosMes: bot.iaTokensIncluidosMes ?? 100000,
+        iaPrecoPorMilTokensExcedente: centavosParaReais(bot.iaPrecoPorMilTokensExcedenteCentavos ?? 8),
+      });
+    } else {
+      setForm(FORM_VAZIO);
+    }
+    setChaveIA('');
   }, [bot, isOpen]);
 
-  // Carrega credenciais ao abrir o modal. O backend já filtra por tenant
-  // quando o usuário não é ADMIN; quando é ADMIN, vêm todas e a UI filtra
-  // pelo clienteId do form (campo abaixo).
+  // A chave da DeepSeek e da PLATAFORMA (uma so, nao por bot) — mas o cadastro
+  // fica aqui mesmo, no modal do bot, pra nao mandar o admin pra outro lugar.
+  // Por isso o status e buscado sempre que o modal abre, independente de qual
+  // bot esta sendo editado.
   useEffect(() => {
     if (!isOpen) return;
     let ativo = true;
-    setCarregandoCredenciais(true);
-    credenciaisService.listar()
-      .then((lista) => { if (ativo) setCredenciais(Array.isArray(lista) ? lista : []); })
-      .catch(() => { if (ativo) setCredenciais([]); })
-      .finally(() => { if (ativo) setCarregandoCredenciais(false); });
+    adminCredencialIAService.obter()
+      .then((cred) => { if (ativo) setChaveIAConfigurada(!!cred); })
+      .catch(() => { if (ativo) setChaveIAConfigurada(false); });
     return () => { ativo = false; };
   }, [isOpen]);
 
-  const tipoEsperado = TIPO_CREDENCIAL_POR_PROVEDOR[form.provedorIa] || null;
-
-  // Filtra credenciais elegíveis: pertencem ao cliente do bot e (se o provedor
-  // exige um tipo específico) batem com o tipo esperado.
-  const credenciaisElegiveis = useMemo(() => {
-    return credenciais.filter((c) => {
-      if (form.clienteId && c.clienteId && c.clienteId !== form.clienteId) return false;
-      if (tipoEsperado && c.tipo !== tipoEsperado) return false;
-      return true;
-    });
-  }, [credenciais, form.clienteId, tipoEsperado]);
-
-  // Quando o provedor muda e a credencial atual não bate mais com o tipo,
-  // limpa o campo pra forçar nova escolha.
-  useEffect(() => {
-    if (!form.credencialIaId) return;
-    const atual = credenciais.find((c) => c.id === form.credencialIaId);
-    if (!atual) return;
-    if (tipoEsperado && atual.tipo !== tipoEsperado) {
-      setForm((f) => ({ ...f, credencialIaId: '' }));
-    }
-  }, [tipoEsperado, credenciais]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     if (!form.clienteId) { alert('Selecione um cliente'); return; }
+
+    if (chaveIA.trim()) {
+      setSalvandoChave(true);
+      try {
+        await adminCredencialIAService.salvar({ apiKey: chaveIA.trim() });
+        setChaveIAConfigurada(true);
+        setChaveIA('');
+      } catch (err) {
+        toast.error(err.response?.data?.erro || 'Falha ao salvar a chave da DeepSeek.');
+        setSalvandoChave(false);
+        return; // nao salva o bot se a chave falhou — evita ligar iaAtiva sem chave valida
+      }
+      setSalvandoChave(false);
+    }
+
     onSalvar({
       ...form,
-      credencialIaId: form.credencialIaId || null,
-      temperaturaIa: parseFloat(form.temperaturaIa) || 0.7,
+      iaTokensIncluidosMes: parseInt(form.iaTokensIncluidosMes, 10) || 0,
+      iaPrecoPorMilTokensExcedenteCentavos: reaisParaCentavos(form.iaPrecoPorMilTokensExcedente),
     });
   };
-
-  const semClienteSelecionado = !form.clienteId;
-  const labelTipoEsperado = tipoEsperado ? tipoEsperado.replace(/_/g, ' ') : null;
 
   return (
     <Modal isOpen={isOpen} onClose={onClose} title={bot ? 'Editar bot' : 'Novo bot'} description="Configuracao basica do bot. O construtor de fluxo fica em outra tela." size="xl">
@@ -344,7 +332,7 @@ function ModalBot({ isOpen, onClose, bot, clientes, onSalvar }) {
           <Combobox
             label="Cliente"
             value={form.clienteId}
-            onChange={(id) => setForm({ ...form, clienteId: id, credencialIaId: '' })}
+            onChange={(id) => setForm({ ...form, clienteId: id })}
             placeholder="Selecione..."
             options={clientes.map((c) => ({ value: c.id, label: c.nome, sublabel: c.email }))}
           />
@@ -361,51 +349,71 @@ function ModalBot({ isOpen, onClose, bot, clientes, onSalvar }) {
         </div>
 
         <div className="border-t border-[var(--border-main)] pt-4">
-          <div className="text-xs font-semibold uppercase tracking-wider text-[var(--text-muted)] mb-3 flex items-center gap-2">
-            <Sparkles size={12} /> Configuracao da IA
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <Select label="Provedor" value={form.provedorIa} onChange={(e) => setForm({ ...form, provedorIa: e.target.value })} options={PROVEDORES} placeholder="" />
-            <Input label="Modelo" value={form.modeloIa} onChange={(e) => setForm({ ...form, modeloIa: e.target.value })} placeholder="gpt-4o-mini, claude-sonnet-4, ..." />
-            <Input label="Temperatura" type="number" step="0.1" min="0" max="2" value={form.temperaturaIa} onChange={(e) => setForm({ ...form, temperaturaIa: e.target.value })} hint="0 = deterministico, 1 = balanceado, 2 = criativo" />
-            <div>
-              <Combobox
-                label="Credencial da IA"
-                value={form.credencialIaId}
-                onChange={(id) => setForm({ ...form, credencialIaId: id || '' })}
-                placeholder={
-                  semClienteSelecionado ? 'Selecione um cliente antes' :
-                  carregandoCredenciais ? 'Carregando...' :
-                  credenciaisElegiveis.length === 0 ? 'Nenhuma credencial compativel' :
-                  'Escolha uma credencial'
-                }
-                options={credenciaisElegiveis.map((c) => ({
-                  value: c.id,
-                  label: c.nome,
-                  sublabel: c.tipo.replace(/_/g, ' '),
-                }))}
-                disabled={semClienteSelecionado || carregandoCredenciais}
-              />
-              <div className="mt-1 flex items-center justify-between gap-2">
-                <span className="text-[11px] text-[var(--text-muted)] flex items-center gap-1">
-                  <KeyRound size={11} />
-                  {labelTipoEsperado ? `Esperado: ${labelTipoEsperado}` : 'Provedor aceita qualquer tipo'}
-                </span>
-                {/* As credenciais passaram a ser cadastradas pelo admin, em
-                    Clientes > Integracoes. Nao ha URL direta (e um modal na
-                    listagem), entao aqui fica so a indicacao do caminho. */}
-                <span className="text-[11px] text-[var(--text-muted)]">
-                  Cadastre em Clientes &gt; Integrações
-                </span>
-              </div>
+          <div className="flex items-center justify-between mb-3">
+            <div className="text-xs font-semibold uppercase tracking-wider text-[var(--text-muted)] flex items-center gap-2">
+              <Sparkles size={12} /> Atendimento com IA
             </div>
+            <Switch checked={form.iaAtiva} onChange={(v) => setForm({ ...form, iaAtiva: v })} ariaLabel="Ativar atendimento com IA" />
           </div>
-          <Textarea label="Prompt do sistema" value={form.promptSistemaIa} onChange={(e) => setForm({ ...form, promptSistemaIa: e.target.value })} rows={5} placeholder="Voce eh um assistente da loja X. Atenda clientes em portugues, seja cordial..." className="mt-3" />
+
+          {form.iaAtiva && (
+            <>
+              <div className="mb-3">
+                <Input
+                  label="Chave da API DeepSeek"
+                  type="password"
+                  value={chaveIA}
+                  onChange={(e) => setChaveIA(e.target.value)}
+                  placeholder={
+                    chaveIAConfigurada === null ? 'Verificando...' :
+                    chaveIAConfigurada ? 'Cole uma nova chave para trocar' :
+                    'Cole a chave da conta DeepSeek'
+                  }
+                  hint={
+                    <span className="inline-flex items-center gap-1.5">
+                      {chaveIAConfigurada
+                        ? <Badge variant="success" size="sm">Conectada</Badge>
+                        : chaveIAConfigurada === false
+                          ? <Badge variant="warning" size="sm">Nao configurada</Badge>
+                          : null}
+                      <span>Unica pra toda a plataforma — vale pra todos os bots com IA ativa, nao so este.</span>
+                    </span>
+                  }
+                />
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <Select
+                  label="Modelo"
+                  value={form.iaModelo}
+                  onChange={(e) => setForm({ ...form, iaModelo: e.target.value })}
+                  options={MODELOS_IA}
+                  placeholder=""
+                />
+                <Input
+                  label="Tokens inclusos por mes"
+                  type="number" min="0" step="1000"
+                  value={form.iaTokensIncluidosMes}
+                  onChange={(e) => setForm({ ...form, iaTokensIncluidosMes: e.target.value })}
+                />
+                <Input
+                  label="R$ a cada 1.000 tokens excedentes"
+                  type="number" min="0" step="0.01"
+                  value={form.iaPrecoPorMilTokensExcedente}
+                  onChange={(e) => setForm({ ...form, iaPrecoPorMilTokensExcedente: e.target.value })}
+                  hint="Cobrado do cliente quando o uso do mes passa do limite acima."
+                />
+              </div>
+              <p className="text-[11px] text-[var(--text-muted)] mt-3">
+                O prompt de atendimento (dados da empresa, regras) e preenchido pelo proprio
+                cliente na tela do bot dele.
+              </p>
+            </>
+          )}
         </div>
 
         <div className="flex justify-end gap-2 pt-2">
           <Button variant="secondary" onClick={onClose} type="button">Cancelar</Button>
-          <Button variant="primary" type="submit">{bot ? 'Salvar' : 'Criar bot'}</Button>
+          <Button variant="primary" type="submit" loading={salvandoChave}>{bot ? 'Salvar' : 'Criar bot'}</Button>
         </div>
       </form>
     </Modal>
@@ -462,14 +470,14 @@ function DrawerBot({ isOpen, onClose, bot, cliente, onEditar, onExcluir, onDupli
           {bot.status === 'ONLINE' ? 'Despublicar (deixar offline)' : 'Publicar (deixar online)'}
         </Button>
 
-        {bot.promptSistemaIa && (
-          <div>
-            <div className="text-xs font-semibold tracking-wide text-[var(--text-secondary)] mb-2">Prompt do sistema</div>
-            <div className="text-sm text-[var(--text-secondary)] leading-relaxed bg-[var(--bg-subtle)] rounded-xl p-3 max-h-48 overflow-y-auto custom-scrollbar">
-              {bot.promptSistemaIa}
-            </div>
-          </div>
-        )}
+        <div className="flex items-center gap-2">
+          <Sparkles size={14} className="text-[var(--text-muted)]" />
+          {bot.iaAtiva ? (
+            <Badge variant="success" size="sm">IA ativa · {bot.iaModelo}</Badge>
+          ) : (
+            <Badge variant="neutral" size="sm">Sem atendimento por IA</Badge>
+          )}
+        </div>
 
         <InfoBox label="Ultima atividade" valor={bot.ultimaAtividadeEm ? new Date(bot.ultimaAtividadeEm).toLocaleString('pt-BR') : 'Sem registros'} />
       </div>

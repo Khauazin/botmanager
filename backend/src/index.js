@@ -28,6 +28,7 @@ const rotasEstoque = require('./routes/estoque.routes');
 const rotasFornecedores = require('./routes/fornecedores.routes');
 const rotasNotasCompra = require('./routes/notas-compra.routes');
 const rotasAdminCredenciais = require('./routes/admin-credenciais.routes');
+const rotasAdminCredencialIA = require('./routes/admin-credencial-ia.routes');
 const rotasFinanceiro = require('./routes/financeiro.routes');
 const rotasContasPagar = require('./routes/contas-pagar.routes');
 const rotasNotificacoes = require('./routes/notificacoes.routes');
@@ -154,6 +155,9 @@ app.use('/fornecedores', rotasFornecedores);
 app.use('/notas-compra', rotasNotasCompra);
 // Admin gerencia as integracoes (credenciais) de cada cliente — rota segura, admin-only.
 app.use('/admin/clientes', rotasAdminCredenciais);
+// Credencial de IA da PLATAFORMA (uma so, da Sellergy) — rota separada da
+// acima porque nao pertence a nenhum cliente.
+app.use('/admin/plataforma', rotasAdminCredencialIA);
 app.use('/financeiro', rotasFinanceiro);
 app.use('/contas-pagar', rotasContasPagar);
 app.use('/notificacoes', rotasNotificacoes);

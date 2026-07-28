@@ -13,6 +13,8 @@
 // no mesmo formato dos campos do model `Cobranca`. A tradução do vocabulário
 // específico de cada PSP (status, nomes de campo) vive SÓ dentro do adapter.
 
+const { fetchComRetentativa } = require('../../utils/httpSeguro');
+
 /**
  * Status normalizado de uma cobrança (espelha o enum `Cobranca.status`).
  * @typedef {'PENDENTE'|'PAGO'|'EXPIRADO'|'CANCELADO'|'ESTORNADO'} StatusCobranca
@@ -138,7 +140,8 @@ class ProvedorPagamento {
   async _executar(req, fixture) {
     if (this.modo === 'fixture') return fixture();
 
-    const resp = await fetch(req.url, {
+    // Timeout + retentativa com backoff (429/5xx) — ver utils/httpSeguro.js.
+    const resp = await fetchComRetentativa(req.url, {
       method: req.metodo || 'GET',
       headers: { 'content-type': 'application/json', ...(req.headers || {}) },
       body: req.corpo ? JSON.stringify(req.corpo) : undefined,
@@ -146,6 +149,8 @@ class ProvedorPagamento {
     const texto = await resp.text();
     const json = texto ? JSON.parse(texto) : {};
     if (!resp.ok) {
+      // Nunca inclui os headers da requisicao no erro — evita vazar a credencial
+      // (Authorization/Bearer) em log de exception.
       throw Object.assign(new Error(`PSP ${this.constructor.provedor} HTTP ${resp.status}`), {
         status: 502, codigo: 'PSP_ERRO', detalhe: json,
       });
