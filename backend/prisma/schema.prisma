@@ -73,6 +73,7 @@ model Cliente {
   documentosFiscais      DocumentoFiscal[]
   configuracaoFiscal     ConfiguracaoFiscal?
   faqs                   Faq[]
+  consumosIA             ConsumoIA[]
   // Horario de funcionamento (JSON). Usado pelo cron pra abrir/fechar caixa
   // automatico do bot. Formato sugerido:
   //   { "abertura": "08:00", "fechamento": "18:00", "dias": [1,2,3,4,5] }
@@ -187,11 +188,56 @@ model Bot {
   // Configuracao do menu fixo do bot (sem IA) — roteador de atendimento/
   // agendamento por opcoes. Formato livre (JSON), preenchido pela Frente 4.
   menuConfig         Json?
+  // Atendimento com IA (DeepSeek) — complementa o motor de FAQ, nao substitui:
+  // iaAtiva=false mantem o bot 100% no menu/FAQ de hoje. A credencial NAO fica
+  // aqui (e uma so, de plataforma — ver Credencial.clienteId=null); so o
+  // modelo e os parametros de cobranca do excedente.
+  iaAtiva                              Boolean  @default(false)
+  iaModelo                             String   @default("deepseek-v4-flash")
+  // Prompt de sistema do atendimento — quem preenche e o proprio tenant na
+  // tela do bot (app/bots), pra descrever a empresa/regras de atendimento.
+  // Editavel via API desde ja; a tela do cliente pra preencher isso fica pra
+  // depois (fora do escopo desta rodada).
+  iaPromptSistema                      String?
+  // LIMITACAO CONHECIDA: os dois campos abaixo sao por-BOT, mas a fatura e
+  // por-CLIENTE. Um cliente com 2 bots de IA ativa ganharia 2x o limite
+  // gratuito na pratica. Aceitavel enquanto quase todo tenant tem 1 bot so;
+  // revisar (mover pra agregado por Cliente) se isso passar a importar.
+  iaTokensIncluidosMes                 Int      @default(100000)
+  iaPrecoPorMilTokensExcedenteCentavos Int      @default(8)
+  consumosIA         ConsumoIA[]
   alertas            Alerta[]
   variaveis          VariavelBot[]
   cliente            Cliente       @relation(fields: [clienteId], references: [id], onDelete: Cascade)
 
   @@map("bots")
+}
+
+// Ledger agregado de consumo de tokens de IA — um registro por bot+mes,
+// incrementado a cada resposta gerada pela DeepSeek (ver services/iaRouter.js).
+// Nao existe ainda um modulo de fatura no Sellergy (nem pra mensalidade); por
+// isso `faturadoEm` fica reservado e nao usado por nada hoje — quando esse
+// modulo existir, ele so precisa ler os registros com faturadoEm=null.
+model ConsumoIA {
+  id                     String    @id @default(uuid())
+  clienteId              String
+  botId                  String
+  // "AAAA-MM" (mes de referencia) — string em vez de DateTime pra agregar por
+  // periodo sem depender de fuso-horario na query.
+  periodo                String
+  tokensUsados           Int       @default(0)
+  tokensExcedentes       Int       @default(0)
+  valorExcedenteCentavos Int       @default(0)
+  faturadoEm             DateTime?
+  criadoEm               DateTime  @default(now())
+  atualizadoEm           DateTime  @updatedAt
+
+  cliente Cliente @relation(fields: [clienteId], references: [id], onDelete: Cascade)
+  bot     Bot     @relation(fields: [botId], references: [id], onDelete: Cascade)
+
+  @@unique([botId, periodo])
+  @@index([clienteId, periodo])
+  @@map("consumo_ia")
 }
 
 model VariavelBot {

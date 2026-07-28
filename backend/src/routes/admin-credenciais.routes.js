@@ -74,6 +74,9 @@ roteador.post('/:clienteId/credenciais', carregarClienteAlvo, async (req, res) =
     if (typeof nome !== 'string' || nome.trim().length < 2 || nome.length > TAM_MAX_NOME) {
       return res.status(400).json({ erro: `Nome obrigatorio (2-${TAM_MAX_NOME} chars).` });
     }
+    if (tipo === 'DEEPSEEK_KEY') {
+      return res.status(400).json({ erro: 'DEEPSEEK_KEY e credencial de plataforma — use /admin/plataforma/credencial-ia.' });
+    }
     if (!TIPOS_VALIDOS.has(tipo)) {
       return res.status(400).json({ erro: `Tipo invalido. Valores: ${[...TIPOS_VALIDOS].join(', ')}.` });
     }

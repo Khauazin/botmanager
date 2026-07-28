@@ -12,6 +12,8 @@
 // Liga o envio real definindo WHATSAPP_ENVIO_REAL=1 no ambiente.
 // =====================================================================
 
+const { fetchComRetentativa } = require('../utils/httpSeguro');
+
 const GRAPH_VERSAO = process.env.WHATSAPP_GRAPH_VERSAO || 'v21.0';
 const ENVIO_REAL = process.env.WHATSAPP_ENVIO_REAL === '1';
 
@@ -56,7 +58,8 @@ async function enviar({ phoneNumberId, token, corpo }) {
 
   const url = `https://graph.facebook.com/${GRAPH_VERSAO}/${phoneNumberId}/messages`;
   try {
-    const resp = await fetch(url, {
+    // Timeout + retentativa com backoff (429/5xx) — ver utils/httpSeguro.js.
+    const resp = await fetchComRetentativa(url, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${token}`,

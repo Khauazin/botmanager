@@ -7,9 +7,9 @@ const {
   TIPOS_VALIDOS, CATEGORIA_POR_TIPO, validarPayload, semSegredos,
 } = require('./credenciaisCore');
 
-test('whitelist só tem as integrações do escopo (HTTP genérico e IA fora)', () => {
-  assert.equal(TIPOS_VALIDOS.size, 6);
-  for (const t of ['MERCADO_PAGO_KEY', 'ASAAS_KEY', 'PAGARME_KEY', 'FOCUS_NFE_KEY', 'NUVEM_FISCAL_KEY', 'WHATSAPP_CLOUD_TOKEN']) {
+test('whitelist tem as integrações do escopo + DeepSeek (HTTP genérico fora)', () => {
+  assert.equal(TIPOS_VALIDOS.size, 7);
+  for (const t of ['MERCADO_PAGO_KEY', 'ASAAS_KEY', 'PAGARME_KEY', 'FOCUS_NFE_KEY', 'NUVEM_FISCAL_KEY', 'WHATSAPP_CLOUD_TOKEN', 'DEEPSEEK_KEY']) {
     assert.ok(TIPOS_VALIDOS.has(t), `${t} deveria estar`);
   }
   for (const t of ['HTTP_BEARER', 'HTTP_BASIC', 'HTTP_API_KEY', 'OUTRO', 'OPENAI_API_KEY']) {
@@ -40,6 +40,12 @@ test('categoria mapeada pra agrupar na UI', () => {
   assert.equal(CATEGORIA_POR_TIPO.MERCADO_PAGO_KEY, 'Pagamento');
   assert.equal(CATEGORIA_POR_TIPO.NUVEM_FISCAL_KEY, 'Fiscal');
   assert.equal(CATEGORIA_POR_TIPO.WHATSAPP_CLOUD_TOKEN, 'WhatsApp');
+  assert.equal(CATEGORIA_POR_TIPO.DEEPSEEK_KEY, 'IA');
+});
+
+test('DeepSeek so exige apiKey', () => {
+  assert.ok(validarPayload('DEEPSEEK_KEY', { apiKey: 'sk-abc123' }).ok);
+  assert.ok(validarPayload('DEEPSEEK_KEY', {}).erro);
 });
 
 test('WhatsApp so exige o accessToken — phoneNumberId nao e lido por nenhum adapter', () => {

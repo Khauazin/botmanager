@@ -3,9 +3,11 @@ const prisma = require('../prisma');
 const middlewareAutenticacao = require('../middlewares/auth.middleware');
 const {
   ehAdmin,
+  requerAdmin,
   requerModuloLiberado,
   requerPermissao,
 } = require('../middlewares/permissoes.middleware');
+const { MODELOS_VALIDOS } = require('../adapters/ia/deepseek');
 
 const roteador = express.Router();
 roteador.use(middlewareAutenticacao);
@@ -15,6 +17,9 @@ roteador.use(requerModuloLiberado('BOTS'));
 // "casca de conexão" do WhatsApp (canal + credencial + verify token). O
 // agendamento/atendimento/campanha automatizados (sem IA) serão remontados nas
 // fases seguintes. Ver erp-pivo.md §5/§7 e erp-arquitetura-e-operacao.md §6.
+//
+// A IA voltou (DeepSeek, opcional por bot) — ver iaAtiva/iaModelo/etc abaixo e
+// services/iaRouter.js.
 const camposBotPublicos = {
   id: true,
   clienteId: true,
@@ -28,9 +33,54 @@ const camposBotPublicos = {
   credencialCanalId: true,
   identificadorCanal: true,
   verifyTokenCanal: true,
+  iaAtiva: true,
+  iaModelo: true,
+  iaPromptSistema: true,
+  iaTokensIncluidosMes: true,
+  iaPrecoPorMilTokensExcedenteCentavos: true,
   criadoEm: true,
   atualizadoEm: true,
 };
+
+const TAM_MAX_PROMPT_IA = 4000;
+
+// Valida os campos de IA vindos do body. Retorna { data } com so o que veio
+// definido, ou { erro }.
+function validarCamposIA(body) {
+  const { iaAtiva, iaModelo, iaPromptSistema, iaTokensIncluidosMes, iaPrecoPorMilTokensExcedenteCentavos } = body;
+  const data = {};
+
+  if (iaAtiva !== undefined) {
+    if (typeof iaAtiva !== 'boolean') return { erro: 'iaAtiva deve ser true ou false.' };
+    data.iaAtiva = iaAtiva;
+  }
+  if (iaModelo !== undefined) {
+    if (!MODELOS_VALIDOS.has(iaModelo)) {
+      return { erro: `iaModelo invalido. Valores: ${[...MODELOS_VALIDOS].join(', ')}.` };
+    }
+    data.iaModelo = iaModelo;
+  }
+  if (iaPromptSistema !== undefined) {
+    if (iaPromptSistema !== null && typeof iaPromptSistema !== 'string') {
+      return { erro: 'iaPromptSistema deve ser texto ou null.' };
+    }
+    if (typeof iaPromptSistema === 'string' && iaPromptSistema.length > TAM_MAX_PROMPT_IA) {
+      return { erro: `iaPromptSistema excede ${TAM_MAX_PROMPT_IA} caracteres.` };
+    }
+    data.iaPromptSistema = iaPromptSistema ? iaPromptSistema.trim() : null;
+  }
+  if (iaTokensIncluidosMes !== undefined) {
+    const n = Number(iaTokensIncluidosMes);
+    if (!Number.isInteger(n) || n < 0) return { erro: 'iaTokensIncluidosMes deve ser inteiro >= 0.' };
+    data.iaTokensIncluidosMes = n;
+  }
+  if (iaPrecoPorMilTokensExcedenteCentavos !== undefined) {
+    const n = Number(iaPrecoPorMilTokensExcedenteCentavos);
+    if (!Number.isInteger(n) || n < 0) return { erro: 'iaPrecoPorMilTokensExcedenteCentavos deve ser inteiro >= 0.' };
+    data.iaPrecoPorMilTokensExcedenteCentavos = n;
+  }
+  return { data };
+}
 
 function filtroTenant(req) {
   // ADMIN do sistema vê tudo. Demais perfis ficam restritos ao seu clienteId.
@@ -52,6 +102,43 @@ roteador.get('/', requerPermissao('BOTS', 'visualizar'), async (req, res) => {
   } catch (erro) {
     console.error('[bots/list]', erro);
     res.status(500).json({ erro: 'Erro ao listar bots' });
+  }
+});
+
+// ==========================================
+// RELATORIO DE CONSUMO DE IA — so ADMIN (visao entre clientes, nao e um dado
+// do tenant). Registrado ANTES de '/:id' de proposito: '/:id' e um parametro
+// generico e casaria com este path primeiro se viesse depois, escondendo esta
+// rota atras de um 404 "bot nao encontrado".
+// Query: ?periodo=AAAA-MM (default: mes atual).
+// ==========================================
+roteador.get('/relatorio-consumo-ia', requerAdmin, async (req, res) => {
+  try {
+    const agora = new Date();
+    const periodo = typeof req.query.periodo === 'string' && /^\d{4}-\d{2}$/.test(req.query.periodo)
+      ? req.query.periodo
+      : `${agora.getFullYear()}-${String(agora.getMonth() + 1).padStart(2, '0')}`;
+
+    const itens = await prisma.consumoIA.findMany({
+      where: { periodo },
+      orderBy: { valorExcedenteCentavos: 'desc' },
+      select: {
+        clienteId: true,
+        botId: true,
+        periodo: true,
+        tokensUsados: true,
+        tokensExcedentes: true,
+        valorExcedenteCentavos: true,
+        faturadoEm: true,
+        cliente: { select: { nome: true } },
+        bot: { select: { nome: true, iaTokensIncluidosMes: true } },
+      },
+    });
+
+    res.json({ periodo, itens });
+  } catch (erro) {
+    console.error('[bots/relatorio-consumo-ia]', erro);
+    res.status(500).json({ erro: 'Erro ao gerar relatorio de consumo de IA.' });
   }
 });
 
@@ -103,9 +190,12 @@ roteador.put('/:id', requerPermissao('BOTS', 'editar'), async (req, res) => {
 
     const { nome, canal, status, telefone } = req.body;
 
+    const { data: dadosIA, erro: erroIA } = validarCamposIA(req.body || {});
+    if (erroIA) return res.status(400).json({ erro: erroIA });
+
     const bot = await prisma.bot.update({
       where: { id },
-      data: { nome, canal, status, telefone },
+      data: { nome, canal, status, telefone, ...dadosIA },
       select: camposBotPublicos,
     });
 
