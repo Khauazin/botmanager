@@ -43,6 +43,33 @@ function normalizarPrecoVariacao(dados) {
   return { ...dados, precoCusto, lucroTipo, lucroValor, preco: calcularPreco(precoCusto, lucroTipo, lucroValor) };
 }
 
+// Valida temDevolucao/diasParaDevolucaoPadrao dado o tipo EFETIVO do produto
+// (do body em criar; do body ou do banco em atualizar, se o tipo nao mudou
+// nesta mesma requisicao). Funcao pura — testavel sem I/O. SERVICO nao tem
+// parametrizacao de devolucao (nao faz sentido "devolver" um corte de cabelo).
+function validarCamposDevolucao({ tipoEfetivo, temDevolucao, diasParaDevolucaoPadrao }) {
+  const data = {};
+  if (temDevolucao !== undefined) {
+    if (typeof temDevolucao !== 'boolean') return { erro: 'temDevolucao deve ser true ou false.', campo: 'temDevolucao' };
+    if (temDevolucao && tipoEfetivo === 'SERVICO') {
+      return { erro: 'Servico nao tem parametrizacao de devolucao.', campo: 'temDevolucao' };
+    }
+    data.temDevolucao = temDevolucao;
+  }
+  if (diasParaDevolucaoPadrao !== undefined) {
+    if (diasParaDevolucaoPadrao === null || diasParaDevolucaoPadrao === '') {
+      data.diasParaDevolucaoPadrao = null;
+    } else {
+      const n = parseInt(diasParaDevolucaoPadrao, 10);
+      if (!Number.isInteger(n) || n <= 0) {
+        return { erro: 'diasParaDevolucaoPadrao deve ser um inteiro maior que zero.', campo: 'diasParaDevolucaoPadrao' };
+      }
+      data.diasParaDevolucaoPadrao = n;
+    }
+  }
+  return { data };
+}
+
 // Include padrao dos especialistas vinculados (M:N via EspecialistaServico).
 const INCLUDE_ESPECIALISTAS = {
   especialistas: { select: { especialista: { select: { id: true, nome: true, ativo: true } } } },
@@ -89,7 +116,12 @@ class CatalogoController {
     try {
       const { clienteId } = req.usuario;
       if (!clienteId) return res.status(403).json({ error: 'Acesso negado: ID do cliente ausente.' });
-      const { nome, descricao, tipo, visibilidade, variacoes, categoriaId, imagemUrl, duracaoMin, especialistasIds } = req.body;
+      const { nome, descricao, tipo, visibilidade, variacoes, categoriaId, imagemUrl, duracaoMin, especialistasIds, temDevolucao, diasParaDevolucaoPadrao } = req.body;
+
+      const { data: dadosDevolucao, erro: erroDevolucao, campo: campoDevolucao } = validarCamposDevolucao({
+        tipoEfetivo: tipo, temDevolucao, diasParaDevolucaoPadrao,
+      });
+      if (erroDevolucao) return res.status(422).json({ error: erroDevolucao, campos: [campoDevolucao] });
 
       // Validação de Categoria Financeira (obrigatória conforme regra de negócio)
       if (!categoriaId) {
@@ -141,6 +173,7 @@ class CatalogoController {
           tipo,
           visibilidade,
           imagemUrl: imagemUrl || null,
+          ...dadosDevolucao,
           variacoes: variacoesNormalizadas.length > 0 ? {
             create: variacoesNormalizadas.map(normalizarPrecoVariacao)
           } : undefined,
@@ -181,7 +214,7 @@ class CatalogoController {
       const { id } = req.params;
       const { clienteId } = req.usuario;
       if (!clienteId) return res.status(403).json({ error: 'Acesso negado: ID do cliente ausente.' });
-      const { nome, descricao, tipo, visibilidade, categoriaId, imagemUrl, duracaoMin, especialistasIds } = req.body;
+      const { nome, descricao, tipo, visibilidade, categoriaId, imagemUrl, duracaoMin, especialistasIds, temDevolucao, diasParaDevolucaoPadrao } = req.body;
 
       const dadosUpdate = {};
       if (nome !== undefined) dadosUpdate.nome = nome;
@@ -190,6 +223,19 @@ class CatalogoController {
       if (visibilidade !== undefined) dadosUpdate.visibilidade = visibilidade;
       if (categoriaId !== undefined) dadosUpdate.categoriaId = categoriaId;
       if (imagemUrl !== undefined) dadosUpdate.imagemUrl = imagemUrl;
+
+      // tipoEfetivo: o que vem no body agora, ou (se o body nao mexe no tipo
+      // e a requisicao mexe em temDevolucao) o tipo atual no banco.
+      let tipoEfetivo = tipo;
+      if (tipoEfetivo === undefined && temDevolucao !== undefined) {
+        const atual = await prisma.produto.findFirst({ where: { id, clienteId }, select: { tipo: true } });
+        tipoEfetivo = atual?.tipo;
+      }
+      const { data: dadosDevolucao, erro: erroDevolucao, campo: campoDevolucao } = validarCamposDevolucao({
+        tipoEfetivo, temDevolucao, diasParaDevolucaoPadrao,
+      });
+      if (erroDevolucao) return res.status(422).json({ error: erroDevolucao, campos: [campoDevolucao] });
+      Object.assign(dadosUpdate, dadosDevolucao);
 
       const produto = await prisma.produto.update({
         where: { id, clienteId },
@@ -335,4 +381,7 @@ class CatalogoController {
   }
 }
 
-module.exports = new CatalogoController();
+const instancia = new CatalogoController();
+// Exposta a parte pra teste unitario da regra pura (sem I/O).
+instancia.validarCamposDevolucao = validarCamposDevolucao;
+module.exports = instancia;

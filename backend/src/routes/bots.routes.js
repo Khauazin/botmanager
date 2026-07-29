@@ -8,6 +8,7 @@ const {
   requerPermissao,
 } = require('../middlewares/permissoes.middleware');
 const { MODELOS_VALIDOS } = require('../adapters/ia/deepseek');
+const { REGISTRO: FERRAMENTAS_VALIDAS } = require('../services/iaFerramentas');
 
 const roteador = express.Router();
 roteador.use(middlewareAutenticacao);
@@ -38,6 +39,7 @@ const camposBotPublicos = {
   iaPromptSistema: true,
   iaTokensIncluidosMes: true,
   iaPrecoPorMilTokensExcedenteCentavos: true,
+  acoesPermitidas: true,
   criadoEm: true,
   atualizadoEm: true,
 };
@@ -47,7 +49,7 @@ const TAM_MAX_PROMPT_IA = 4000;
 // Valida os campos de IA vindos do body. Retorna { data } com so o que veio
 // definido, ou { erro }.
 function validarCamposIA(body) {
-  const { iaAtiva, iaModelo, iaPromptSistema, iaTokensIncluidosMes, iaPrecoPorMilTokensExcedenteCentavos } = body;
+  const { iaAtiva, iaModelo, iaPromptSistema, iaTokensIncluidosMes, iaPrecoPorMilTokensExcedenteCentavos, acoesPermitidas } = body;
   const data = {};
 
   if (iaAtiva !== undefined) {
@@ -78,6 +80,16 @@ function validarCamposIA(body) {
     const n = Number(iaPrecoPorMilTokensExcedenteCentavos);
     if (!Number.isInteger(n) || n < 0) return { erro: 'iaPrecoPorMilTokensExcedenteCentavos deve ser inteiro >= 0.' };
     data.iaPrecoPorMilTokensExcedenteCentavos = n;
+  }
+  if (acoesPermitidas !== undefined) {
+    if (!Array.isArray(acoesPermitidas) || !acoesPermitidas.every((a) => typeof a === 'string')) {
+      return { erro: 'acoesPermitidas deve ser uma lista de textos.' };
+    }
+    const invalidas = acoesPermitidas.filter((a) => !FERRAMENTAS_VALIDAS[a]);
+    if (invalidas.length > 0) {
+      return { erro: `Acao invalida: ${invalidas.join(', ')}. Valores: ${Object.keys(FERRAMENTAS_VALIDAS).join(', ')}.` };
+    }
+    data.acoesPermitidas = [...new Set(acoesPermitidas)];
   }
   return { data };
 }

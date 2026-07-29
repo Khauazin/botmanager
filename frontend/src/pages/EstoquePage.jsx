@@ -10,7 +10,7 @@ import {
   Card, CardHeader, CardTitle, Button, IconButton, Input, Textarea, Select, Badge,
   EmptyState, SearchBar, useToast, Tabs, TabsList, TabsTrigger, TabsContent,
   Dropdown, DropdownItem, DropdownDivider, UploadImagem, InputDuracao,
-  KpiCard, Tooltip,
+  KpiCard, Tooltip, Switch,
 } from '../components/ui';
 import Modal from '../components/Modal';
 import catalogoService from '../services/catalogoService';
@@ -958,12 +958,44 @@ function CampoCustoLucro({ form, setForm }) {
   );
 }
 
+// Aluguel/devolucao — so faz sentido pra produto fisico (Estoque cadastra so
+// FISICO, entao nao precisa checar tipo aqui). Quando ligado, a venda desse
+// produto exige data de devolucao + cliente identificado.
+function BlocoDevolucao({ form, setForm }) {
+  return (
+    <div className="border-t border-[var(--border-main)] pt-5">
+      <div className="flex items-center justify-between mb-1">
+        <label className="text-sm font-medium text-[var(--text-secondary)]">
+          {rotuloAjuda('Este produto é alugado?', 'Ative quando o cliente leva o produto emprestado e precisa devolver depois — o sistema vai pedir a data de devolução na venda e avisar quando ela chegar perto.')}
+        </label>
+        <Switch
+          checked={form.temDevolucao}
+          onChange={(v) => setForm({ ...form, temDevolucao: v, diasParaDevolucaoPadrao: v ? form.diasParaDevolucaoPadrao : '' })}
+          ariaLabel="Este produto é alugado"
+        />
+      </div>
+      {form.temDevolucao && (
+        <div className="mt-3 max-w-xs">
+          <Input
+            label={rotuloAjuda('Prazo padrão (dias)', 'Quantos dias depois da venda o produto costuma voltar. Sugestão pro funcionário — ele pode ajustar a data exata em cada venda. Deixe em branco pra sempre escolher a data na hora.')}
+            type="number"
+            min="1"
+            value={form.diasParaDevolucaoPadrao}
+            onChange={(e) => setForm({ ...form, diasParaDevolucaoPadrao: e.target.value })}
+            placeholder="Ex: 3"
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ModalEditarVariacao({ isOpen, onClose, variacao, onSucesso }) {
   const toast = useToast();
   const [form, setForm] = useState({
     nome: '', sku: '', preco: 0, precoCusto: 0, lucroTipo: 'VALOR', lucroValor: 0,
     estoqueAtual: 0, estoqueMinimo: 0, estoqueIdeal: 0,
-    imagemUrl: '',
+    imagemUrl: '', temDevolucao: false, diasParaDevolucaoPadrao: '',
   });
   const [salvando, setSalvando] = useState(false);
 
@@ -983,6 +1015,8 @@ function ModalEditarVariacao({ isOpen, onClose, variacao, onSucesso }) {
         // imagem propria (mesma logica da tabela). Upload novo sobrescreve
         // na variacao; o produto fica intacto.
         imagemUrl: variacao.imagemUrl || variacao.produto?.imagemUrl || '',
+        temDevolucao: variacao.produto?.temDevolucao ?? false,
+        diasParaDevolucaoPadrao: variacao.produto?.diasParaDevolucaoPadrao ?? '',
       });
     }
   }, [isOpen, variacao]);
@@ -1003,17 +1037,27 @@ function ModalEditarVariacao({ isOpen, onClose, variacao, onSucesso }) {
     e.preventDefault();
     setSalvando(true);
     try {
-      await api.put(`/catalogo/variacoes/${variacao.id}`, {
-        nome: form.nome,
-        sku: form.sku || null,
-        precoCusto: parseFloat(form.precoCusto) || 0,
-        lucroTipo: form.lucroTipo || 'VALOR',
-        lucroValor: parseFloat(form.lucroValor) || 0,
-        preco: calcularPrecoVenda(form.precoCusto, form.lucroTipo, form.lucroValor),
-        estoqueAtual: parseInt(form.estoqueAtual, 10) || 0,
-        estoqueMinimo: parseInt(form.estoqueMinimo, 10) || 0,
-        estoqueIdeal: parseInt(form.estoqueIdeal, 10) || 0,
-      });
+      await Promise.all([
+        api.put(`/catalogo/variacoes/${variacao.id}`, {
+          nome: form.nome,
+          sku: form.sku || null,
+          precoCusto: parseFloat(form.precoCusto) || 0,
+          lucroTipo: form.lucroTipo || 'VALOR',
+          lucroValor: parseFloat(form.lucroValor) || 0,
+          preco: calcularPrecoVenda(form.precoCusto, form.lucroTipo, form.lucroValor),
+          estoqueAtual: parseInt(form.estoqueAtual, 10) || 0,
+          estoqueMinimo: parseInt(form.estoqueMinimo, 10) || 0,
+          estoqueIdeal: parseInt(form.estoqueIdeal, 10) || 0,
+        }),
+        // Aluguel/devolucao vive no produto (nao na variacao) — atualiza em
+        // paralelo via a mesma rota do Catalogo.
+        catalogoService.atualizar(variacao.produtoId, {
+          temDevolucao: form.temDevolucao,
+          diasParaDevolucaoPadrao: form.temDevolucao && form.diasParaDevolucaoPadrao !== ''
+            ? parseInt(form.diasParaDevolucaoPadrao, 10) || null
+            : null,
+        }),
+      ]);
       toast.success?.('Produto atualizado.');
       onSucesso?.();
     } catch (err) {
@@ -1077,6 +1121,8 @@ function ModalEditarVariacao({ isOpen, onClose, variacao, onSucesso }) {
           />
         </div>
 
+        <BlocoDevolucao form={form} setForm={setForm} />
+
         <div className="flex justify-end gap-2 pt-2">
           <Button variant="secondary" onClick={onClose} type="button">Cancelar</Button>
           <Button variant="primary" type="submit" loading={salvando}>Salvar</Button>
@@ -1137,6 +1183,7 @@ function ModalProduto({ isOpen, onClose, categorias, onSalvar }) {
     nome: '', descricao: '', categoriaId: '', tipo: 'FISICO', imagemUrl: '',
     nomeVariacao: 'Padrao', sku: '', preco: 0, precoCusto: '', lucroTipo: 'VALOR', lucroValor: '',
     estoqueAtual: '', estoqueMinimo: '', estoqueIdeal: '', duracaoMin: '', imagemVariacaoUrl: '',
+    temDevolucao: false, diasParaDevolucaoPadrao: '',
   });
   const [tempsParaLimpar, setTempsParaLimpar] = useState([]);
 
@@ -1146,6 +1193,7 @@ function ModalProduto({ isOpen, onClose, categorias, onSalvar }) {
         nome: '', descricao: '', categoriaId: '', tipo: 'FISICO', imagemUrl: '',
         nomeVariacao: 'Padrao', sku: '', preco: 0, precoCusto: 0, lucroTipo: 'VALOR', lucroValor: 0,
         estoqueAtual: 0, estoqueMinimo: 0, estoqueIdeal: 0, duracaoMin: '', imagemVariacaoUrl: '',
+        temDevolucao: false, diasParaDevolucaoPadrao: '',
       });
       setTempsParaLimpar([]);
     }
@@ -1201,6 +1249,10 @@ function ModalProduto({ isOpen, onClose, categorias, onSalvar }) {
       tipo: 'FISICO',
       visibilidade: 'ATIVO',
       imagemUrl: form.imagemUrl || null,
+      temDevolucao: form.temDevolucao,
+      diasParaDevolucaoPadrao: form.temDevolucao && form.diasParaDevolucaoPadrao !== ''
+        ? parseInt(form.diasParaDevolucaoPadrao, 10) || null
+        : null,
       variacoes: [{
         nome: form.nomeVariacao || 'Padrao',
         sku: form.sku || null,
@@ -1278,6 +1330,8 @@ function ModalProduto({ isOpen, onClose, categorias, onSalvar }) {
 
         {/* Sem seletor de Tipo: Estoque cadastra so produtos fisicos.
             Servicos sao cadastrados no Catalogo. */}
+
+        <BlocoDevolucao form={form} setForm={setForm} />
 
         <div className="border-t border-[var(--border-main)] pt-5">
           <div className="text-sm font-semibold uppercase tracking-wider text-[var(--text-muted)] mb-4">Preço e quantidade</div>

@@ -17,6 +17,84 @@ roteador.use(requerModuloLiberado('CATALOGO'));
 
 roteador.get('/', requerPermissao('CATALOGO', 'visualizar'), CatalogoController.listar);
 roteador.post('/', requerPermissao('CATALOGO', 'criar'), CatalogoController.criar);
+
+// ==========================================
+// CONFIGURACAO DE LAYOUT DO CATALOGO (PDF) — 1 registro por tenant.
+// Registrado ANTES de '/:id' de proposito: '/:id' e um parametro generico e
+// casaria com "config" primeiro se viesse depois (ver mesmo cuidado em
+// bots.routes.js com /relatorio-consumo-ia).
+// ==========================================
+const TEMPLATES_CATALOGO_VALIDOS = new Set(['FOTOS_GRANDES', 'LISTA_COMPACTA', 'MINIMALISTA']);
+const AGRUPAMENTOS_CATALOGO_VALIDOS = new Set(['CATEGORIA', 'NENHUM']);
+const REGEX_COR_HEX = /^#[0-9a-fA-F]{6}$/;
+
+roteador.get('/config', requerPermissao('CATALOGO', 'visualizar'), async (req, res) => {
+  try {
+    const { clienteId } = req.usuario;
+    if (!clienteId) return res.status(403).json({ erro: 'Tenant indefinido.' });
+    const config = await prisma.configuracaoCatalogo.findUnique({ where: { clienteId } });
+    res.json(config || null);
+  } catch (erro) {
+    console.error('[catalogo/config/get]', erro);
+    res.status(500).json({ erro: 'Erro ao buscar configuracao do catalogo.' });
+  }
+});
+
+roteador.put('/config', requerPermissao('CATALOGO', 'editar'), async (req, res) => {
+  try {
+    const { clienteId } = req.usuario;
+    if (!clienteId) return res.status(403).json({ erro: 'Tenant indefinido.' });
+
+    const { template, corDestaque, agruparPor, mostrarPreco, mostrarFoto, mostrarDescricao, ocultarSemEstoque } = req.body || {};
+    const data = {};
+
+    if (template !== undefined) {
+      if (!TEMPLATES_CATALOGO_VALIDOS.has(template)) {
+        return res.status(400).json({ erro: `template invalido. Valores: ${[...TEMPLATES_CATALOGO_VALIDOS].join(', ')}.` });
+      }
+      data.template = template;
+    }
+    if (corDestaque !== undefined) {
+      if (typeof corDestaque !== 'string' || !REGEX_COR_HEX.test(corDestaque)) {
+        return res.status(400).json({ erro: 'corDestaque deve ser um hex valido (ex: #2563EB).' });
+      }
+      data.corDestaque = corDestaque;
+    }
+    if (agruparPor !== undefined) {
+      if (!AGRUPAMENTOS_CATALOGO_VALIDOS.has(agruparPor)) {
+        return res.status(400).json({ erro: `agruparPor invalido. Valores: ${[...AGRUPAMENTOS_CATALOGO_VALIDOS].join(', ')}.` });
+      }
+      data.agruparPor = agruparPor;
+    }
+    if (mostrarPreco !== undefined) {
+      if (typeof mostrarPreco !== 'boolean') return res.status(400).json({ erro: 'mostrarPreco deve ser true ou false.' });
+      data.mostrarPreco = mostrarPreco;
+    }
+    if (mostrarFoto !== undefined) {
+      if (typeof mostrarFoto !== 'boolean') return res.status(400).json({ erro: 'mostrarFoto deve ser true ou false.' });
+      data.mostrarFoto = mostrarFoto;
+    }
+    if (mostrarDescricao !== undefined) {
+      if (typeof mostrarDescricao !== 'boolean') return res.status(400).json({ erro: 'mostrarDescricao deve ser true ou false.' });
+      data.mostrarDescricao = mostrarDescricao;
+    }
+    if (ocultarSemEstoque !== undefined) {
+      if (typeof ocultarSemEstoque !== 'boolean') return res.status(400).json({ erro: 'ocultarSemEstoque deve ser true ou false.' });
+      data.ocultarSemEstoque = ocultarSemEstoque;
+    }
+
+    const config = await prisma.configuracaoCatalogo.upsert({
+      where: { clienteId },
+      create: { clienteId, ...data },
+      update: data,
+    });
+    res.json(config);
+  } catch (erro) {
+    console.error('[catalogo/config/put]', erro);
+    res.status(500).json({ erro: 'Erro ao salvar configuracao do catalogo.' });
+  }
+});
+
 roteador.get('/:id', requerPermissao('CATALOGO', 'visualizar'), CatalogoController.buscarPorId);
 roteador.put('/:id', requerPermissao('CATALOGO', 'editar'), CatalogoController.atualizar);
 roteador.delete('/:id', requerPermissao('CATALOGO', 'excluir'), CatalogoController.excluir);

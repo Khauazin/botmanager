@@ -34,6 +34,7 @@ const rotasContasPagar = require('./routes/contas-pagar.routes');
 const rotasNotificacoes = require('./routes/notificacoes.routes');
 const rotasRelatoriosMensais = require('./routes/relatorios-mensais.routes');
 const rotasVendas = require('./routes/vendas.routes');
+const rotasDevolucoes = require('./routes/devolucoes.routes');
 const rotasCmv = require('./routes/cmv.routes');
 const rotasRelatorios = require('./routes/relatorios.routes');
 const rotasCampanhas = require('./routes/campanhas.routes');
@@ -163,6 +164,7 @@ app.use('/contas-pagar', rotasContasPagar);
 app.use('/notificacoes', rotasNotificacoes);
 app.use('/relatorios-mensais', rotasRelatoriosMensais);
 app.use('/vendas', rotasVendas);
+app.use('/devolucoes', rotasDevolucoes);
 app.use('/relatorios', rotasRelatorios);
 app.use('/campanhas', rotasCampanhas);
 app.use('/faq', rotasFaq);
@@ -216,6 +218,16 @@ servidor.listen(PORTA, async () => {
     iniciarCronMensal();
   } catch (e) {
     console.error('[boot] Falha ao inicializar cron mensal:', e?.message);
+  }
+
+  // Cron de aviso de devolução (aluguel) — roda 08:00 BRT todo dia. Alerta na
+  // plataforma + tentativa de WhatsApp pro cliente final quando a data de
+  // devolução se aproxima (ver Cliente.diasAvisoDevolucao).
+  try {
+    const { iniciar: iniciarCronDevolucoes } = require('./jobs/cronDevolucoes');
+    iniciarCronDevolucoes();
+  } catch (e) {
+    console.error('[boot] Falha ao inicializar cron de devoluções:', e?.message);
   }
 });
 

@@ -70,15 +70,21 @@ model Cliente {
   especialistas          Especialista[]
   cobrancas              Cobranca[]
   configuracaoPagamento  ConfiguracaoPagamento?
+  configuracaoCatalogo   ConfiguracaoCatalogo?
   documentosFiscais      DocumentoFiscal[]
   configuracaoFiscal     ConfiguracaoFiscal?
   faqs                   Faq[]
   consumosIA             ConsumoIA[]
+  devolucoes             Devolucao[]
   // Horario de funcionamento (JSON). Usado pelo cron pra abrir/fechar caixa
   // automatico do bot. Formato sugerido:
   //   { "abertura": "08:00", "fechamento": "18:00", "dias": [1,2,3,4,5] }
   // Nullable: sem isso, cron usa default 00:00.
   horarioFuncionamento   Json?
+  // Quantos dias ANTES da data de devolucao o cron avisa (alerta na
+  // plataforma + tentativa de WhatsApp pro cliente final). 0 = so no proprio
+  // dia. Ver jobs/cronDevolucoes.js.
+  diasAvisoDevolucao     Int      @default(1)
 
   @@map("clientes")
 }
@@ -205,6 +211,11 @@ model Bot {
   // revisar (mover pra agregado por Cliente) se isso passar a importar.
   iaTokensIncluidosMes                 Int      @default(100000)
   iaPrecoPorMilTokensExcedenteCentavos Int      @default(8)
+  // Quais acoes autonomas o bot pode executar durante o atendimento (tool
+  // calling da DeepSeek) — ex.: ["CATALOGO", "CONSULTAR_ESTOQUE", "COBRANCA_PIX"].
+  // Configurado pelo proprio cliente (nao pelo admin). Lista vazia = so
+  // conversa, nenhuma acao. Ver services/iaFerramentas/.
+  acoesPermitidas                      String[] @default([])
   consumosIA         ConsumoIA[]
   alertas            Alerta[]
   variaveis          VariavelBot[]
@@ -312,6 +323,7 @@ model Lead {
   vendas                 Venda[]
   lancamentosFinanceiros LancamentoFinanceiro[]
   variacoes              LeadVariacao[]
+  devolucoes             Devolucao[]
 
   @@map("leads")
 }
@@ -475,6 +487,7 @@ model Venda {
   agendamento            Agendamento?           @relation(fields: [agendamentoId], references: [id], onDelete: SetNull)
   lancamentosFinanceiros LancamentoFinanceiro[]
   movimentacoesEstoque   MovimentacaoEstoque[]
+  devolucoes             Devolucao[]
 
   @@unique([clienteId, numero])
   @@index([sessaoCaixaId])
@@ -494,6 +507,13 @@ model Produto {
   tipo         TipoProduto         @default(FISICO)
   visibilidade VisibilidadeProduto @default(ATIVO)
   imagemUrl    String? // URL no MinIO (bucket sellergy-midia)
+  // Aluguel/devolucao — so faz sentido pra FISICO (validado no backend;
+  // SERVICO nao tem essa parametrizacao). Quando ligado, a venda exige data
+  // de devolucao + identificacao do cliente final (nome/telefone/cpf via Lead).
+  temDevolucao            Boolean @default(false)
+  // Prazo padrao em dias corridos apos a venda — so sugestao pro funcionario,
+  // que pode ajustar a data exata na hora de vender. Null = sempre manual.
+  diasParaDevolucaoPadrao Int?
   criadoEm     DateTime            @default(now())
   atualizadoEm DateTime            @updatedAt
 
@@ -533,6 +553,7 @@ model VariacaoProduto {
   produto       Produto               @relation(fields: [produtoId], references: [id], onDelete: Cascade)
   movimentacoes MovimentacaoEstoque[]
   vinculosLead  LeadVariacao[]
+  devolucoes    Devolucao[]
 
   @@map("variacoes_produto")
 }
@@ -557,6 +578,39 @@ model LeadVariacao {
   @@unique([leadId, variacaoId])
   @@index([leadId])
   @@map("lead_variacoes")
+}
+
+// ==========================================
+// ALUGUEL / DEVOLUCAO
+// ==========================================
+// 1 registro por item alugado numa venda (produto com temDevolucao=true).
+// O contato do cliente final (nome/telefone/cpf) mora no Lead, nao aqui —
+// evita duplicar dado que ja existe. `lembreteEnviadoEm` trava o cron pra nao
+// avisar de novo todo dia enquanto a devolucao seguir pendente.
+model Devolucao {
+  id                String    @id @default(uuid())
+  clienteId         String
+  vendaId           String
+  variacaoId        String
+  leadId            String
+  quantidade        Int
+  dataDevolucao     DateTime
+  // Preenchido quando o item volta fisicamente — dispara o estorno de
+  // estoque (MovimentacaoEstoque tipo DEVOLUCAO, mesma logica do
+  // cancelamento de venda).
+  devolvidoEm       DateTime?
+  lembreteEnviadoEm DateTime?
+  criadoEm          DateTime  @default(now())
+  atualizadoEm      DateTime  @updatedAt
+
+  cliente  Cliente         @relation(fields: [clienteId], references: [id], onDelete: Cascade)
+  venda    Venda           @relation(fields: [vendaId], references: [id], onDelete: Cascade)
+  variacao VariacaoProduto @relation(fields: [variacaoId], references: [id])
+  lead     Lead            @relation(fields: [leadId], references: [id])
+
+  @@index([clienteId, dataDevolucao])
+  @@index([vendaId])
+  @@map("devolucoes")
 }
 
 // ==========================================
@@ -900,6 +954,30 @@ model ConfiguracaoPagamento {
   @@map("configuracoes_pagamento")
 }
 
+// Layout visual do catalogo em PDF que o bot envia (ferramenta CATALOGO).
+// 1 por cliente — nao por bot, pra nao pedir a mesma configuracao de novo se
+// o tenant tiver mais de um bot no futuro.
+model ConfiguracaoCatalogo {
+  id             String              @id @default(uuid())
+  clienteId      String              @unique
+  template       TemplateCatalogo    @default(FOTOS_GRANDES)
+  corDestaque    String              @default("#2563EB") // hex, validado no backend
+  agruparPor     AgrupamentoCatalogo @default(CATEGORIA)
+  mostrarPreco   Boolean             @default(true)
+  mostrarFoto    Boolean             @default(true)
+  mostrarDescricao Boolean           @default(true)
+  // Produto FISICO com estoque zerado some do catalogo (servico nao e afetado
+  // — nao controla quantidade). Evita mandar pro cliente final algo que a
+  // loja nao tem pra vender agora.
+  ocultarSemEstoque Boolean          @default(true)
+  criadoEm       DateTime            @default(now())
+  atualizadoEm   DateTime            @updatedAt
+
+  cliente Cliente @relation(fields: [clienteId], references: [id], onDelete: Cascade)
+
+  @@map("configuracoes_catalogo")
+}
+
 model Cobranca {
   id                 String            @id @default(uuid())
   clienteId          String
@@ -914,6 +992,12 @@ model Cobranca {
   linkUrl            String?
   vencimento         DateTime?
   pagoEm             DateTime?
+  // Carrinho pretendido, preenchido quando a cobranca nasce de uma ferramenta
+  // do bot (origem=VENDA, refId ainda null — a Venda so existe DEPOIS da
+  // confirmacao). Formato: [{ variacaoId, quantidade }]. Consumido e limpo
+  // (nao apagado — fica pra auditoria) por aplicarEfeitoConfirmacao ao criar
+  // a Venda de verdade.
+  itensPendentes     Json?
   criadoEm           DateTime          @default(now())
   atualizadoEm       DateTime          @updatedAt
 
@@ -1207,6 +1291,17 @@ enum OrigemCobranca {
   AVULSA
 }
 
+enum TemplateCatalogo {
+  FOTOS_GRANDES
+  LISTA_COMPACTA
+  MINIMALISTA
+}
+
+enum AgrupamentoCatalogo {
+  CATEGORIA
+  NENHUM
+}
+
 enum MetodoCobranca {
   PIX
   LINK
@@ -1271,6 +1366,7 @@ enum TipoNotificacao {
   CAIXA_AUTO_FECHADO // cron diário fechou caixa do bot
   CAIXA_DIVERGENCIA // fechamento manual com diferença != 0
   CONTA_PAGAR_VENCENDO // contas a pagar com diaVencimento próximo
+  DEVOLUCAO_PROXIMA // item alugado com devolução próxima/vencida
   GENERICA // tipo livre pra avisos avulsos
 }
 

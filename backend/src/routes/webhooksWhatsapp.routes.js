@@ -81,7 +81,12 @@ roteador.post('/whatsapp', async (req, res) => {
         for (const msg of mensagens) {
           const de = msg.from;
           const texto = msg.text?.body || msg.button?.text || msg.interactive?.list_reply?.title || '';
-          const resposta = await montarRespostaBot({ bot, texto, faqs });
+          // canalContexto: so usado por ferramentas que enviam midia direto
+          // (ex.: CATALOGO manda o PDF como documento, fora da resposta de texto).
+          const resposta = await montarRespostaBot({
+            bot, texto, faqs,
+            canalContexto: { phoneNumberId, token, telefoneCliente: de },
+          });
           if (resposta?.texto) {
             await enviarTexto({ phoneNumberId, token, para: de, texto: resposta.texto });
           }

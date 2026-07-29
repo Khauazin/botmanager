@@ -75,6 +75,17 @@ const catalogoService = {
   removerImagemVariacao: async (variacaoId) => {
     await api.delete(`/catalogo/variacoes/${variacaoId}/imagem`);
   },
+
+  // ===== Layout do catalogo em PDF (config por tenant) =====
+  obterConfig: async () => {
+    const response = await api.get('/catalogo/config');
+    return response.data;
+  },
+
+  salvarConfig: async (dados) => {
+    const response = await api.put('/catalogo/config', dados);
+    return response.data;
+  },
 };
 
 export default catalogoService;

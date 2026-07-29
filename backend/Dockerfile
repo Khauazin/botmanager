@@ -2,8 +2,15 @@ FROM node:20-alpine
 
 WORKDIR /app
 
-# OpenSSL (Prisma) + toolchain para compilar addons nativos.
-RUN apk add --no-cache openssl python3 make g++ linux-headers
+# OpenSSL (Prisma) + toolchain para compilar addons nativos + Chromium do
+# sistema (usado pelo puppeteer-core pra gerar o PDF do catalogo). Alpine usa
+# musl libc — o Chromium que o pacote "puppeteer" baixaria sozinho e compilado
+# pra glibc e nao roda aqui, por isso instalamos via apk e usamos
+# "puppeteer-core" (sem download proprio) apontado pro binario do sistema.
+RUN apk add --no-cache openssl python3 make g++ linux-headers chromium
+
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
 
 # Copia package.json e package-lock.json (se existir)
 COPY package*.json ./
