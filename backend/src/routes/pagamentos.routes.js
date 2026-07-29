@@ -14,13 +14,12 @@ const {
   requerModuloLiberado,
   requerPapelPrivilegiado,
 } = require('../middlewares/permissoes.middleware');
-const { carregarCredencialDecifrada } = require('../credenciais');
 const {
-  criarProvedor,
   PROVEDORES,
   TIPO_CREDENCIAL_POR_PROVEDOR,
 } = require('../adapters/pagamento');
 const { aplicarStatusCobranca, CAMPOS_COBRANCA } = require('../services/cobrancaPagamento');
+const { provedorDoTenant, criarCobranca } = require('../services/pagamentoService');
 
 const roteador = express.Router();
 roteador.use(middlewareAutenticacao);
@@ -29,18 +28,6 @@ roteador.use(requerPapelPrivilegiado);
 
 const METODOS = ['PIX', 'LINK'];
 const ORIGENS = ['VENDA', 'AGENDAMENTO', 'AVULSA'];
-
-// Monta o provedor do tenant a partir da config + credencial cifrada do cofre.
-// modo 'fixture' nesta fase (nao bate na rede) — a Fase 4 troca pra 'live'.
-async function provedorDoTenant(clienteId) {
-  const config = await prisma.configuracaoPagamento.findUnique({ where: { clienteId } });
-  if (!config || !config.ativo) {
-    throw Object.assign(new Error('Pagamento nao configurado ou inativo para este tenant.'), { status: 400 });
-  }
-  const credencial = await carregarCredencialDecifrada({ credencialId: config.credencialId, clienteId });
-  const psp = criarProvedor(config.provedor, { credencial, modo: 'fixture' });
-  return { config, psp };
-}
 
 // --- Configuracao do provedor (1 por tenant) ---
 
@@ -134,47 +121,18 @@ roteador.post('/cobrancas', async (req, res) => {
       return res.status(400).json({ erro: `Origem invalida. Use: ${ORIGENS.join(', ')}.` });
     }
 
-    const { config, psp } = await provedorDoTenant(clienteId);
-
-    // Cria a Cobranca PENDENTE primeiro; o id dela vira a refExterna que liga a
-    // cobranca do PSP de volta ao nosso registro.
-    const cobranca = await prisma.cobranca.create({
-      data: {
-        clienteId, origem: org, refId: refId || null, valor: valorNum,
-        metodo: met, status: 'PENDENTE', provedor: config.provedor,
-        vencimento: vencimento ? new Date(vencimento) : null,
-      },
+    // Nucleo (cria PENDENTE, chama o PSP, atualiza com o resultado) vive em
+    // services/pagamentoService.js — reusado tambem pela ferramenta do bot.
+    const resultado = await criarCobranca({
+      clienteId, origem: org, refId: refId || null, valor: valorNum, metodo: met, descricao, vencimento, pagador,
     });
-
-    let dto;
-    try {
-      const params = {
-        valor: valorNum,
-        descricao: descricao || `Cobranca ${cobranca.id}`,
-        refExterna: cobranca.id,
-        vencimento,
-        pagador,
-      };
-      dto = met === 'PIX' ? await psp.criarCobrancaPix(params) : await psp.criarLink(params);
-    } catch (errPsp) {
-      // Falhou no PSP — cancela a Cobranca pra nao deixar lixo PENDENTE.
-      await prisma.cobranca.update({ where: { id: cobranca.id }, data: { status: 'CANCELADO' } });
-      throw errPsp;
-    }
-
-    const atualizada = await prisma.cobranca.update({
-      where: { id: cobranca.id },
-      data: {
-        provedorCobrancaId: dto.provedorCobrancaId,
-        status: dto.status || 'PENDENTE',
-        qrCode: dto.qrCode || null,
-        linkUrl: dto.linkUrl || null,
-        vencimento: dto.vencimento ? new Date(dto.vencimento) : (vencimento ? new Date(vencimento) : null),
-      },
-      select: CAMPOS_COBRANCA,
-    });
-    // qrCodeBase64 (imagem do QR) nao e persistido — devolve so nesta resposta.
-    res.status(201).json({ ...atualizada, qrCodeBase64: dto.qrCodeBase64 || null });
+    // Filtra de volta pro mesmo contrato de sempre (o service devolve o
+    // registro completo + qrCodeBase64; a rota HTTP nunca expos clienteId
+    // nem itensPendentes).
+    const camposFiltrados = Object.fromEntries(
+      Object.entries(resultado).filter(([k]) => k in CAMPOS_COBRANCA || k === 'qrCodeBase64')
+    );
+    res.status(201).json(camposFiltrados);
   } catch (e) {
     if (e.status) return res.status(e.status).json({ erro: e.message });
     console.error('[pagamentos/cobrancas create]', e);

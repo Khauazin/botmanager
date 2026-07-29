@@ -3,7 +3,7 @@ import { Outlet, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard, ShoppingBag, Kanban, Calendar, Package, Box,
   DollarSign, MessageCircle, Send, Bot, Settings, BarChart3, UserCog,
-  CreditCard, Receipt
+  CreditCard, Receipt, RotateCcw
 } from 'lucide-react';
 import Sidebar from './Sidebar';
 import Topbar from './Topbar';
@@ -17,6 +17,7 @@ const NAV_OPERACAO = [
   { to: '/app/crm', label: 'Clientes', icon: Kanban, modulo: 'CRM' },
   { to: '/app/agenda', label: 'Agenda', icon: Calendar, modulo: 'AGENDA' },
   { to: '/app/vendas', label: 'Vendas', icon: ShoppingBag, modulo: 'VENDAS' },
+  { to: '/app/devolucoes', label: 'Devoluções', icon: RotateCcw, modulo: 'VENDAS' },
   { to: '/app/catalogo', label: 'Serviços', icon: Package, modulo: 'CATALOGO' },
   {
     to: '/app/estoque',
@@ -78,6 +79,7 @@ const TITULOS = {
   '/app/crm': { titulo: 'Clientes', breadcrumb: 'Atendimento' },
   '/app/agenda': { titulo: 'Agenda', breadcrumb: 'Operacao' },
   '/app/vendas': { titulo: 'Vendas', breadcrumb: 'Operacao' },
+  '/app/devolucoes': { titulo: 'Devoluções', breadcrumb: 'Operacao' },
   '/app/catalogo': { titulo: 'Serviços', breadcrumb: 'Operacao' },
   '/app/estoque': { titulo: 'Estoque', breadcrumb: 'Produtos' },
   '/app/estoque/visao-geral': { titulo: 'Estoque · Visão geral', breadcrumb: 'Estoque · Produtos' },

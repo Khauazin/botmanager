@@ -499,6 +499,11 @@ function ModalVenda({ isOpen, onClose, variacoes, leads, categorias, onSalvar })
   // Itens: [{ variacaoId, quantidade, _v: variacao }]. _v fica em memoria
   // pra UI calcular total/estoque/preco sem ir ao backend.
   const [itens, setItens] = useState([]);
+  // Data de devolucao por item alugado: { [variacaoId]: 'AAAA-MM-DD' }.
+  const [datasDevolucao, setDatasDevolucao] = useState({});
+  // Cliente final (nome/telefone/cpf) — so usado quando ha item com devolucao
+  // e nenhum cliente do CRM foi selecionado no combobox abaixo.
+  const [clienteFinal, setClienteFinal] = useState({ nome: '', telefone: '', cpf: '' });
 
   // Mapa categoriaId -> nome pra exibir inline em cada item da venda.
   // Categoria vem do produto, nao precisa mais de campo global.
@@ -511,6 +516,8 @@ function ModalVenda({ isOpen, onClose, variacoes, leads, categorias, onSalvar })
     if (isOpen) {
       setForm({ metodoPagamento: 'PIX', observacoes: '', leadId: '', parcelas: 1 });
       setItens([]);
+      setDatasDevolucao({});
+      setClienteFinal({ nome: '', telefone: '', cpf: '' });
     }
   }, [isOpen]);
 
@@ -537,6 +544,18 @@ function ModalVenda({ isOpen, onClose, variacoes, leads, categorias, onSalvar })
     });
     // Sem auto-preencher categoria global — categoria agora vem do proprio
     // produto (mostrada inline) e o backend gera 1 lancamento por categoria.
+
+    // Item alugavel: sugere a data de devolucao pelo prazo padrao do produto
+    // (funcionario ainda pode ajustar). Sem prazo padrao, fica em branco —
+    // ele escolhe na hora.
+    if (v.produto?.temDevolucao && v.produto?.diasParaDevolucaoPadrao) {
+      setDatasDevolucao((prev) => {
+        if (prev[variacaoId]) return prev;
+        const d = new Date();
+        d.setDate(d.getDate() + v.produto.diasParaDevolucaoPadrao);
+        return { ...prev, [variacaoId]: d.toISOString().slice(0, 10) };
+      });
+    }
   };
 
   const mudarQuantidade = (variacaoId, novaQtd) => {
@@ -553,6 +572,12 @@ function ModalVenda({ isOpen, onClose, variacoes, leads, categorias, onSalvar })
 
   const removerItem = (variacaoId) => {
     setItens((prev) => prev.filter((i) => i.variacaoId !== variacaoId));
+    setDatasDevolucao((prev) => {
+      if (!(variacaoId in prev)) return prev;
+      const novo = { ...prev };
+      delete novo[variacaoId];
+      return novo;
+    });
   };
 
   const valorTotal = useMemo(
@@ -560,14 +585,39 @@ function ModalVenda({ isOpen, onClose, variacoes, leads, categorias, onSalvar })
     [itens]
   );
 
+  // Itens que exigem devolucao — precisam de data + cliente identificado.
+  const itensComDevolucao = useMemo(
+    () => itens.filter((i) => i._v?.produto?.temDevolucao),
+    [itens]
+  );
+  const precisaClienteFinal = itensComDevolucao.length > 0 && !form.leadId;
+
   const handleSubmit = (e) => {
     e.preventDefault();
     if (itens.length === 0) { alert('Adicione pelo menos 1 produto.'); return; }
+
+    if (itensComDevolucao.length > 0) {
+      const semData = itensComDevolucao.find((i) => !datasDevolucao[i.variacaoId]);
+      if (semData) {
+        alert(`Informe a data de devolução de ${semData._v.produto.nome} (${semData._v.nome}).`);
+        return;
+      }
+      if (precisaClienteFinal && (!clienteFinal.nome.trim() || !clienteFinal.telefone.trim() || !clienteFinal.cpf.trim())) {
+        alert('Item com devolução precisa de um cliente identificado: selecione um cliente do CRM ou preencha nome, telefone e CPF.');
+        return;
+      }
+    }
+
     onSalvar({
-      itens: itens.map((i) => ({ variacaoId: i.variacaoId, quantidade: i.quantidade })),
+      itens: itens.map((i) => ({
+        variacaoId: i.variacaoId,
+        quantidade: i.quantidade,
+        ...(datasDevolucao[i.variacaoId] ? { dataDevolucao: datasDevolucao[i.variacaoId] } : {}),
+      })),
       metodoPagamento: form.metodoPagamento,
       observacoes: form.observacoes,
       leadId: form.leadId || undefined,
+      ...(precisaClienteFinal ? { clienteFinal } : {}),
       // categoriaId NAO vai mais — backend agrupa por categoria do produto.
       // Parcelas so faz sentido pra credito — backend ignora se outro metodo.
       parcelas: form.metodoPagamento === 'CREDITO' ? (parseInt(form.parcelas, 10) || 1) : 1,
@@ -614,60 +664,80 @@ function ModalVenda({ isOpen, onClose, variacoes, leads, categorias, onSalvar })
               // claro pro usuario que cada item leva a categoria propria
               // (1 lancamento financeiro por categoria).
               const catNome = mapaCategorias.get(v?.produto?.categoriaId);
+              const alugavel = !!v?.produto?.temDevolucao;
               return (
-                <div key={item.variacaoId} className="flex items-center gap-3 p-3 rounded-xl border border-[var(--border-main)] bg-[var(--bg-card)]">
-                  <Package size={16} strokeWidth={1.75} className="text-[var(--text-muted)] flex-shrink-0" />
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <div className="text-sm font-semibold text-[var(--text-main)] truncate">
-                        {v?.produto?.nome} <span className="text-[var(--text-muted)] font-normal">{v?.nome}</span>
+                <div key={item.variacaoId} className="rounded-xl border border-[var(--border-main)] bg-[var(--bg-card)] overflow-hidden">
+                  <div className="flex items-center gap-3 p-3">
+                    <Package size={16} strokeWidth={1.75} className="text-[var(--text-muted)] flex-shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <div className="text-sm font-semibold text-[var(--text-main)] truncate">
+                          {v?.produto?.nome} <span className="text-[var(--text-muted)] font-normal">{v?.nome}</span>
+                        </div>
+                        {catNome
+                          ? <Badge variant="neutral" size="sm">{catNome}</Badge>
+                          : <Badge variant="warning" size="sm">Sem categoria</Badge>}
+                        {alugavel && <Badge variant="accent" size="sm">Aluguel</Badge>}
                       </div>
-                      {catNome
-                        ? <Badge variant="neutral" size="sm">{catNome}</Badge>
-                        : <Badge variant="warning" size="sm">Sem categoria</Badge>}
+                      <div className="text-xs text-[var(--text-muted)] mt-0.5">
+                        {fmtBRL(precoUnit)} cada
+                        {v?.produto?.tipo === 'FISICO' && ` · ${v.estoqueAtual} em estoque`}
+                      </div>
                     </div>
-                    <div className="text-xs text-[var(--text-muted)] mt-0.5">
-                      {fmtBRL(precoUnit)} cada
-                      {v?.produto?.tipo === 'FISICO' && ` · ${v.estoqueAtual} em estoque`}
-                    </div>
-                  </div>
 
-                  {/* Stepper de quantidade */}
-                  <div className="flex items-center gap-1 flex-shrink-0">
-                    <button
-                      type="button"
-                      onClick={() => mudarQuantidade(item.variacaoId, item.quantidade - 1)}
-                      className="w-7 h-9 rounded-lg border border-[var(--border-main)] bg-[var(--bg-card)] text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)] text-sm font-semibold transition-colors"
-                      disabled={item.quantidade <= 1}
-                      aria-label="Diminuir"
-                    >−</button>
-                    <input
-                      type="number"
-                      min={1}
-                      value={item.quantidade}
-                      onChange={(e) => mudarQuantidade(item.variacaoId, e.target.value)}
-                      className="w-12 h-9 text-center text-sm font-semibold tabular-nums rounded-lg border border-[var(--border-main)] bg-[var(--bg-card)] text-[var(--text-main)] focus:outline-none focus:ring-2 focus:ring-[var(--border-main)]"
-                      aria-label="Quantidade"
+                    {/* Stepper de quantidade */}
+                    <div className="flex items-center gap-1 flex-shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => mudarQuantidade(item.variacaoId, item.quantidade - 1)}
+                        className="w-7 h-9 rounded-lg border border-[var(--border-main)] bg-[var(--bg-card)] text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)] text-sm font-semibold transition-colors"
+                        disabled={item.quantidade <= 1}
+                        aria-label="Diminuir"
+                      >−</button>
+                      <input
+                        type="number"
+                        min={1}
+                        value={item.quantidade}
+                        onChange={(e) => mudarQuantidade(item.variacaoId, e.target.value)}
+                        className="w-12 h-9 text-center text-sm font-semibold tabular-nums rounded-lg border border-[var(--border-main)] bg-[var(--bg-card)] text-[var(--text-main)] focus:outline-none focus:ring-2 focus:ring-[var(--border-main)]"
+                        aria-label="Quantidade"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => mudarQuantidade(item.variacaoId, item.quantidade + 1)}
+                        className="w-7 h-9 rounded-lg border border-[var(--border-main)] bg-[var(--bg-card)] text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)] text-sm font-semibold transition-colors"
+                        aria-label="Aumentar"
+                      >+</button>
+                    </div>
+
+                    <div className="text-sm font-semibold text-[var(--text-main)] tabular-nums w-24 text-right flex-shrink-0">
+                      {fmtBRL(precoUnit * item.quantidade)}
+                    </div>
+
+                    <IconButton
+                      icon={Trash2}
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => removerItem(item.variacaoId)}
+                      ariaLabel="Remover item"
                     />
-                    <button
-                      type="button"
-                      onClick={() => mudarQuantidade(item.variacaoId, item.quantidade + 1)}
-                      className="w-7 h-9 rounded-lg border border-[var(--border-main)] bg-[var(--bg-card)] text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)] text-sm font-semibold transition-colors"
-                      aria-label="Aumentar"
-                    >+</button>
                   </div>
 
-                  <div className="text-sm font-semibold text-[var(--text-main)] tabular-nums w-24 text-right flex-shrink-0">
-                    {fmtBRL(precoUnit * item.quantidade)}
-                  </div>
-
-                  <IconButton
-                    icon={Trash2}
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => removerItem(item.variacaoId)}
-                    ariaLabel="Remover item"
-                  />
+                  {/* Item alugavel: exige data de devolucao. Prazo padrao do
+                      produto ja vem sugerido (ver adicionarItem); funcionario
+                      pode ajustar. */}
+                  {alugavel && (
+                    <div className="flex items-center gap-2 px-3 pb-3 pt-2 border-t border-[var(--border-subtle)] bg-[var(--warning-soft)]/20">
+                      <Input
+                        size="sm"
+                        type="date"
+                        label="Devolução em"
+                        value={datasDevolucao[item.variacaoId] || ''}
+                        onChange={(e) => setDatasDevolucao((prev) => ({ ...prev, [item.variacaoId]: e.target.value }))}
+                        required
+                      />
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -725,14 +795,55 @@ function ModalVenda({ isOpen, onClose, variacoes, leads, categorias, onSalvar })
         {/* Lead vinculado */}
         <Combobox
           size="lg"
-          label="Cliente (opcional)"
+          label={itensComDevolucao.length > 0 ? 'Cliente' : 'Cliente (opcional)'}
           value={form.leadId}
           onChange={(id) => setForm({ ...form, leadId: id })}
           placeholder="Sem cliente vinculado"
           options={leads.map((l) => ({ value: l.id, label: l.nome, sublabel: l.telefone || l.email }))}
           clearable
-          hint="Vincule a venda a um lead pra trilha no CRM."
+          hint={
+            itensComDevolucao.length > 0
+              ? 'Item com devolução precisa de um cliente identificado. Selecione um já cadastrado, ou preencha os dados abaixo.'
+              : 'Vincule a venda a um lead pra trilha no CRM.'
+          }
         />
+
+        {/* Dados do cliente final digitados na hora — so aparece quando ha
+            item com devolucao e nenhum cliente do CRM foi selecionado acima.
+            O backend cria (ou reaproveita, por cpf/telefone) um Lead de
+            verdade a partir desses dados. */}
+        {precisaClienteFinal && (
+          <div className="p-4 rounded-xl border border-[var(--warning-soft)] bg-[var(--warning-soft)]/20 space-y-3">
+            <div className="text-xs font-semibold text-[var(--warning-text)]">
+              Quem está alugando? Precisamos pra avisar sobre a devolução.
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <Input
+                size="sm"
+                label="Nome"
+                value={clienteFinal.nome}
+                onChange={(e) => setClienteFinal({ ...clienteFinal, nome: e.target.value })}
+                required
+              />
+              <Input
+                size="sm"
+                label="Telefone"
+                value={clienteFinal.telefone}
+                onChange={(e) => setClienteFinal({ ...clienteFinal, telefone: e.target.value })}
+                placeholder="(11) 99999-9999"
+                required
+              />
+              <Input
+                size="sm"
+                label="CPF"
+                value={clienteFinal.cpf}
+                onChange={(e) => setClienteFinal({ ...clienteFinal, cpf: e.target.value })}
+                placeholder="000.000.000-00"
+                required
+              />
+            </div>
+          </div>
+        )}
 
         <Textarea
           size="lg"

@@ -22,6 +22,7 @@ import PlaceholderPage from './pages/PlaceholderPage';
 import CRMPage from './pages/CRMPage';
 import AgendaPage from './pages/AgendaPage';
 import VendasPage from './pages/VendasPage';
+import DevolucoesPage from './pages/DevolucoesPage';
 import CatalogoPage from './pages/CatalogoPage';
 import EstoquePage from './pages/EstoquePage';
 import FornecedoresPage from './pages/FornecedoresPage';
@@ -168,6 +169,7 @@ export default function App() {
             <Route path="/app/crm" element={<CRMPage />} />
             <Route path="/app/agenda" element={<AgendaPage />} />
             <Route path="/app/vendas" element={<VendasPage />} />
+            <Route path="/app/devolucoes" element={<DevolucoesPage />} />
             <Route path="/app/catalogo" element={<CatalogoPage />} />
             <Route path="/app/estoque" element={<Navigate to="/app/estoque/visao-geral" replace />} />
             {/* Rotas especificas precisam vir ANTES do catch-all :aba. */}

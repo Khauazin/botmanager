@@ -6,11 +6,13 @@ import {
 } from 'lucide-react';
 import api from '../services/api';
 import notificacaoService from '../services/notificacaoService';
+import catalogoService from '../services/catalogoService';
+import devolucaoService from '../services/devolucaoService';
 import SellergyLogo from '../components/SellergyLogo';
 import { useAuthStore } from '../store/auth.store';
 import { useUiStore } from '../store/ui.store';
 import {
-  Card, CardHeader, CardTitle, CardDescription, Button, Input, Badge,
+  Card, CardHeader, CardTitle, CardDescription, Button, Input, Select, Badge,
   Tabs, TabsList, TabsTrigger, TabsContent, useToast, Switch
 } from '../components/ui';
 
@@ -19,9 +21,11 @@ const MAX_LOGO_SIZE = 1024 * 1024; // 1 MB
 /**
  * Configuracoes do CLIENTE.
  *
- * 4 abas compactas:
+ * Abas compactas:
  *  - Aparencia: tema (light/dark) + branding (logo + nome customizado)
  *  - Operacao: horario de funcionamento da loja (usado pelo cron do caixa)
+ *  - Catalogo: layout do PDF que o bot envia (template, cor, agrupamento)
+ *  - Notificacoes: preferencias de aviso
  *  - Conta: links pra Perfil, Equipe, Permissoes
  *  - Plano: modulos liberados
  *
@@ -36,6 +40,7 @@ export default function ConfiguracoesPage() {
 
   const [tab, setTab] = useState('aparencia');
   const podeEditarOperacao = user?.perfil === 'CLIENT' || user?.perfil === 'ADMINISTRADOR';
+  const podeVerCatalogo = !!user?.modulosLiberados?.CATALOGO;
 
   return (
     <div className="space-y-5">
@@ -43,6 +48,7 @@ export default function ConfiguracoesPage() {
         <TabsList variant="pills">
           <TabsTrigger value="aparencia" variant="pills">Aparencia</TabsTrigger>
           <TabsTrigger value="operacao" variant="pills">Operacao</TabsTrigger>
+          <TabsTrigger value="catalogo" variant="pills">Catálogo</TabsTrigger>
           <TabsTrigger value="notificacoes" variant="pills">Notificações</TabsTrigger>
           <TabsTrigger value="conta" variant="pills">Conta</TabsTrigger>
           <TabsTrigger value="plano" variant="pills">Plano</TabsTrigger>
@@ -66,13 +72,31 @@ export default function ConfiguracoesPage() {
 
         <TabsContent value="operacao" className="mt-5 space-y-5">
           {podeEditarOperacao ? (
-            <BlocoHorarioFuncionamento user={user} refreshUser={refreshUser} toast={toast} />
+            <>
+              <BlocoHorarioFuncionamento user={user} refreshUser={refreshUser} toast={toast} />
+              <BlocoDevolucao toast={toast} />
+            </>
           ) : (
             <Card padding="lg">
               <div className="flex items-start gap-3">
                 <AlertCircle size={18} className="text-[var(--text-muted)] flex-shrink-0 mt-0.5" />
                 <div className="text-sm text-[var(--text-muted)]">
                   Apenas o dono da conta ou administradores podem alterar o horario de funcionamento.
+                </div>
+              </div>
+            </Card>
+          )}
+        </TabsContent>
+
+        <TabsContent value="catalogo" className="mt-5 space-y-5">
+          {podeVerCatalogo ? (
+            <BlocoCatalogo toast={toast} />
+          ) : (
+            <Card padding="lg">
+              <div className="flex items-start gap-3">
+                <AlertCircle size={18} className="text-[var(--text-muted)] flex-shrink-0 mt-0.5" />
+                <div className="text-sm text-[var(--text-muted)]">
+                  O modulo de Catalogo nao esta liberado para sua conta. Fale com o administrador.
                 </div>
               </div>
             </Card>
@@ -386,6 +410,313 @@ function BlocoHorarioFuncionamento({ user, refreshUser, toast }) {
   );
 }
 
+// =====================================================================
+// Catalogo — layout do PDF gerado pelo bot (ver services/catalogoPdf.js e
+// a ferramenta CATALOGO em iaFerramentas). Persiste em ConfiguracaoCatalogo,
+// 1 registro por tenant.
+// =====================================================================
+const REGEX_COR_HEX = /^#[0-9a-fA-F]{6}$/;
+
+const TEMPLATES_CATALOGO = [
+  { valor: 'FOTOS_GRANDES', titulo: 'Fotos grandes', descricao: 'Uma foto por linha — bom pra poucos produtos com apelo visual.' },
+  { valor: 'LISTA_COMPACTA', titulo: 'Lista compacta', descricao: 'Varios itens por pagina — ideal pra catalogos com muitos produtos.' },
+  { valor: 'MINIMALISTA', titulo: 'Minimalista', descricao: 'So nome e preco, sem foto — rapido de gerar e ler.' },
+];
+
+const CONFIG_CATALOGO_PADRAO = {
+  template: 'FOTOS_GRANDES',
+  corDestaque: '#2563EB',
+  agruparPor: 'CATEGORIA',
+  mostrarPreco: true,
+  mostrarFoto: true,
+  mostrarDescricao: true,
+  ocultarSemEstoque: true,
+};
+
+function BlocoCatalogo({ toast }) {
+  const [config, setConfig] = useState(CONFIG_CATALOGO_PADRAO);
+  const [carregando, setCarregando] = useState(true);
+  const [salvando, setSalvando] = useState(false);
+
+  useEffect(() => {
+    catalogoService.obterConfig()
+      .then((r) => setConfig(r ? { ...CONFIG_CATALOGO_PADRAO, ...r } : CONFIG_CATALOGO_PADRAO))
+      .catch(() => toast.error('Nao foi possivel carregar a configuracao do catalogo.'))
+      .finally(() => setCarregando(false));
+  }, [toast]);
+
+  const handleSalvar = async () => {
+    setSalvando(true);
+    try {
+      const atualizado = await catalogoService.salvarConfig({
+        template: config.template,
+        corDestaque: config.corDestaque,
+        agruparPor: config.agruparPor,
+        mostrarPreco: config.mostrarPreco,
+        mostrarFoto: config.mostrarFoto,
+        mostrarDescricao: config.mostrarDescricao,
+        ocultarSemEstoque: config.ocultarSemEstoque,
+      });
+      setConfig({ ...CONFIG_CATALOGO_PADRAO, ...atualizado });
+      toast.success('Layout do catalogo atualizado.');
+    } catch (e) {
+      toast.error(e.response?.data?.erro || 'Erro ao salvar.');
+    } finally {
+      setSalvando(false);
+    }
+  };
+
+  if (carregando) {
+    return (
+      <Card padding="lg">
+        <div className="text-sm text-[var(--text-muted)] py-6 text-center">Carregando…</div>
+      </Card>
+    );
+  }
+
+  const corValida = REGEX_COR_HEX.test(config.corDestaque) ? config.corDestaque : '#2563EB';
+
+  return (
+    <Card padding="lg">
+      <CardHeader>
+        <div>
+          <CardTitle>Layout do catalogo em PDF</CardTitle>
+          <CardDescription>
+            Como o catalogo enviado pelo bot no WhatsApp e organizado e exibido pro cliente final.
+          </CardDescription>
+        </div>
+      </CardHeader>
+
+      <div className="space-y-5">
+        <div>
+          <div className="text-[11px] font-bold uppercase tracking-wider text-[var(--text-muted)] mb-2">
+            Modelo
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            {TEMPLATES_CATALOGO.map((t) => {
+              const ativo = config.template === t.valor;
+              return (
+                <button
+                  key={t.valor}
+                  type="button"
+                  onClick={() => setConfig((c) => ({ ...c, template: t.valor }))}
+                  className={`p-4 rounded-xl border-2 transition-colors text-left ${
+                    ativo ? 'border-[var(--accent)] bg-[var(--accent-soft)]/40' : 'border-[var(--border-main)] hover:border-[var(--text-muted)]'
+                  }`}
+                >
+                  <div className="text-sm font-semibold text-[var(--text-main)]">{t.titulo}</div>
+                  <div className="text-xs text-[var(--text-muted)] mt-1 leading-relaxed">{t.descricao}</div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label className="block text-xs font-semibold tracking-wide text-[var(--text-secondary)] mb-1.5">
+              Cor de destaque
+            </label>
+            <div className="flex items-center gap-2">
+              <input
+                type="color"
+                value={corValida}
+                onChange={(e) => setConfig((c) => ({ ...c, corDestaque: e.target.value }))}
+                className="w-10 h-10 rounded-lg border border-[var(--border-main)] cursor-pointer bg-transparent flex-shrink-0"
+                aria-label="Cor de destaque do catalogo"
+              />
+              <Input
+                value={config.corDestaque}
+                onChange={(e) => setConfig((c) => ({ ...c, corDestaque: e.target.value }))}
+                placeholder="#2563EB"
+              />
+            </div>
+          </div>
+
+          <Select
+            label="Agrupar produtos por"
+            value={config.agruparPor}
+            onChange={(e) => setConfig((c) => ({ ...c, agruparPor: e.target.value }))}
+            options={[
+              { value: 'CATEGORIA', label: 'Categoria' },
+              { value: 'NENHUM', label: 'Sem agrupamento' },
+            ]}
+          />
+        </div>
+
+        <div>
+          <div className="text-[11px] font-bold uppercase tracking-wider text-[var(--text-muted)] mb-2">
+            O que aparece no catalogo
+          </div>
+          <div className="space-y-2">
+            <TogglePreferenciaCatalogo
+              label="Preco"
+              descricao="Mostra o valor de cada produto."
+              checked={config.mostrarPreco}
+              onChange={(v) => setConfig((c) => ({ ...c, mostrarPreco: v }))}
+            />
+            <TogglePreferenciaCatalogo
+              label="Foto"
+              descricao={
+                config.template === 'MINIMALISTA'
+                  ? 'O modelo Minimalista nunca mostra foto, mesmo com esta opcao ligada.'
+                  : 'Mostra a imagem cadastrada do produto.'
+              }
+              checked={config.mostrarFoto}
+              disabled={config.template === 'MINIMALISTA'}
+              onChange={(v) => setConfig((c) => ({ ...c, mostrarFoto: v }))}
+            />
+            <TogglePreferenciaCatalogo
+              label="Descricao"
+              descricao={
+                config.template === 'MINIMALISTA'
+                  ? 'O modelo Minimalista nunca mostra descricao, mesmo com esta opcao ligada.'
+                  : 'Mostra o texto de descricao do produto, quando existir.'
+              }
+              checked={config.mostrarDescricao}
+              disabled={config.template === 'MINIMALISTA'}
+              onChange={(v) => setConfig((c) => ({ ...c, mostrarDescricao: v }))}
+            />
+          </div>
+        </div>
+
+        <div>
+          <div className="text-[11px] font-bold uppercase tracking-wider text-[var(--text-muted)] mb-2">
+            Regras do catalogo
+          </div>
+          <div className="space-y-2">
+            <TogglePreferenciaCatalogo
+              label="Ocultar produtos sem estoque"
+              descricao="Produtos fisicos com estoque zerado nao aparecem no catalogo enviado pelo bot. Servicos nao sao afetados (nao controlam estoque)."
+              checked={config.ocultarSemEstoque}
+              onChange={(v) => setConfig((c) => ({ ...c, ocultarSemEstoque: v }))}
+            />
+          </div>
+        </div>
+
+        <div className="border-t border-[var(--border-main)] pt-4">
+          <div className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] mb-2">
+            Pre-visualizacao
+          </div>
+          <div className="rounded-xl border border-[var(--border-main)] overflow-hidden bg-white">
+            <div className="p-3" style={{ borderBottom: `3px solid ${corValida}` }}>
+              <div className="text-xs font-bold" style={{ color: corValida }}>Sua Loja</div>
+            </div>
+            <div className="p-3 space-y-2">
+              {config.template !== 'MINIMALISTA' && config.agruparPor === 'CATEGORIA' && (
+                <div className="text-[10px] font-bold uppercase text-gray-500">Categoria exemplo</div>
+              )}
+              <div className={`flex gap-2 ${config.template === 'LISTA_COMPACTA' ? 'items-center' : 'items-start'}`}>
+                {config.mostrarFoto && config.template !== 'MINIMALISTA' && (
+                  <div className={`bg-gray-200 rounded flex-shrink-0 ${config.template === 'FOTOS_GRANDES' ? 'w-16 h-16' : 'w-8 h-8'}`} />
+                )}
+                <div className="min-w-0">
+                  <div className="text-xs font-semibold text-gray-800">Produto exemplo</div>
+                  {config.mostrarDescricao && config.template !== 'MINIMALISTA' && (
+                    <div className="text-[10px] text-gray-500">Descricao curta do produto</div>
+                  )}
+                  {config.mostrarPreco && (
+                    <div className="text-[10px] font-bold text-gray-700 mt-0.5">R$ 49,90</div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex justify-end">
+          <Button variant="primary" icon={Save} onClick={handleSalvar} loading={salvando}>
+            Salvar layout
+          </Button>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+function TogglePreferenciaCatalogo({ label, descricao, checked, onChange, disabled = false }) {
+  return (
+    <div className={`flex items-center justify-between px-3 py-2.5 rounded-lg border border-[var(--border-main)] bg-[var(--bg-subtle)]/40 ${disabled ? 'opacity-70' : ''}`}>
+      <div>
+        <div className="text-sm font-semibold text-[var(--text-main)]">{label}</div>
+        <div className="text-xs text-[var(--text-muted)]">{descricao}</div>
+      </div>
+      <Switch checked={checked} onChange={onChange} disabled={disabled} ariaLabel={label} />
+    </div>
+  );
+}
+
+// =====================================================================
+// Devolucao — aviso de aluguel prestes a vencer (bot + alerta na plataforma).
+// So o "quantos dias antes" mora aqui; o "este produto e alugado" fica no
+// cadastro do produto (Estoque), e a lista de devolucoes pendentes tem tela
+// propria (app/devolucoes).
+// =====================================================================
+function BlocoDevolucao({ toast }) {
+  const [dias, setDias] = useState(1);
+  const [carregando, setCarregando] = useState(true);
+  const [salvando, setSalvando] = useState(false);
+
+  useEffect(() => {
+    devolucaoService.obterConfig()
+      .then((r) => setDias(r?.diasAvisoDevolucao ?? 1))
+      .catch(() => toast.error('Não foi possível carregar a configuração de devolução.'))
+      .finally(() => setCarregando(false));
+  }, [toast]);
+
+  const handleSalvar = async () => {
+    setSalvando(true);
+    try {
+      const r = await devolucaoService.salvarConfig({ diasAvisoDevolucao: parseInt(dias, 10) || 0 });
+      setDias(r.diasAvisoDevolucao);
+      toast.success('Configuração de devolução salva.');
+    } catch (e) {
+      toast.error(e.response?.data?.erro || 'Erro ao salvar.');
+    } finally {
+      setSalvando(false);
+    }
+  };
+
+  if (carregando) {
+    return (
+      <Card padding="lg">
+        <div className="text-sm text-[var(--text-muted)] py-6 text-center">Carregando…</div>
+      </Card>
+    );
+  }
+
+  return (
+    <Card padding="lg">
+      <CardHeader>
+        <div>
+          <CardTitle>Aviso de devolução (aluguel)</CardTitle>
+          <CardDescription>
+            Produtos marcados como "alugado" no Estoque avisam o cliente e geram alerta aqui
+            quando a devolução se aproxima.
+          </CardDescription>
+        </div>
+      </CardHeader>
+
+      <div className="flex items-end gap-3">
+        <div className="max-w-[180px]">
+          <Input
+            label="Avisar quantos dias antes"
+            type="number"
+            min="0"
+            max="30"
+            value={dias}
+            onChange={(e) => setDias(e.target.value)}
+            hint="0 = avisa só no próprio dia da devolução."
+          />
+        </div>
+        <Button variant="primary" icon={Save} onClick={handleSalvar} loading={salvando}>
+          Salvar
+        </Button>
+      </div>
+    </Card>
+  );
+}
+
 function ThemeOption({ value, current, onChange, icon: Icon, label, desc }) {
   const ativo = current === value;
   return (
@@ -451,6 +782,10 @@ const ROTULOS_NOTIFICACAO = {
   CONTA_PAGAR_VENCENDO: {
     titulo: 'Conta a pagar vencendo',
     descricao: 'Lembrete dos dias antes do vencimento das contas cadastradas.',
+  },
+  DEVOLUCAO_PROXIMA: {
+    titulo: 'Devolução de aluguel próxima',
+    descricao: 'Avisa quando um produto alugado está perto (ou passou) da data de devolução.',
   },
   GENERICA: {
     titulo: 'Avisos diversos',

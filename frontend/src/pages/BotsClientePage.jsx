@@ -1,21 +1,46 @@
 import { useEffect, useState } from 'react';
 import {
-  Bot as BotIcon, MessageCircle, Plus, Trash2, Wifi, WifiOff, Settings, Copy,
+  Bot as BotIcon, MessageCircle, Plus, Trash2, Wifi, WifiOff, Settings, Copy, Sparkles, Save,
 } from 'lucide-react';
 import {
-  Card, CardHeader, CardTitle, CardDescription, Button, Input, Select, Badge, IconButton,
-  EmptyState, Drawer, useToast,
+  Card, CardHeader, CardTitle, CardDescription, Button, Input, Textarea, Select, Badge, IconButton,
+  EmptyState, Drawer, Switch, LabelAjuda, useToast,
 } from '../components/ui';
 import api, { urlPublica } from '../services/api';
 import credenciaisService from '../services/credenciaisService';
 import faqService from '../services/faqService';
 
-// Tela do tenant pro bot WhatsApp (pos-pivo, sem IA): atendimento (FAQ) e o
-// conteudo principal — e o que se mexe toda semana. A conexao tecnica
-// (phoneNumberId, verify token, credencial, callback URL) fica escondida atras
-// da engrenagem: mexe uma vez, na hora de configurar, e nao compete mais com o
-// conteudo do dia a dia.
+// Tela do tenant pro bot WhatsApp: quando o bot NAO tem IA (padrao pos-pivo),
+// o conteudo principal e o menu de FAQ. Quando o administrador libera o
+// atendimento com IA pro bot (em admin/bots), esta tela troca o FAQ pelo
+// prompt/ações da IA — as duas coisas nao coexistem em runtime (ver
+// webhooksWhatsapp.routes.js: com iaAtiva, o FAQ nem e consultado). A conexao
+// tecnica (phoneNumberId, verify token, credencial, callback URL) fica
+// escondida atras da engrenagem: mexe uma vez, na hora de configurar, e nao
+// compete com o conteudo do dia a dia.
 const TIPO_CRED_WHATSAPP = 'WHATSAPP_CLOUD_TOKEN';
+
+const TAM_MAX_PROMPT_IA = 4000;
+
+// Espelha o registro de backend/src/services/iaFerramentas — cada chave
+// precisa existir la pra ser aceita pelo PUT /bots/:id.
+const ACOES_BOT_DISPONIVEIS = [
+  {
+    chave: 'CONSULTAR_ESTOQUE',
+    titulo: 'Consultar estoque e preço',
+    descricao: 'O bot confere se um produto tem estoque disponível e informa o preço quando o cliente perguntar.',
+  },
+  {
+    chave: 'COBRANCA_PIX',
+    titulo: 'Gerar cobrança Pix',
+    descricao: 'O bot gera um Pix quando o cliente confirmar a compra. A venda e a baixa no estoque acontecem sozinhas assim que o pagamento é confirmado.',
+  },
+  {
+    chave: 'CATALOGO',
+    titulo: 'Enviar catálogo em PDF',
+    descricao: 'O bot monta e envia o catálogo completo de produtos quando o cliente pedir para ver o que a loja vende.',
+  },
+];
 
 function gerarVerifyToken() {
   let s = '';
@@ -36,6 +61,8 @@ export default function BotsClientePage() {
   const [conexao, setConexao] = useState({ credencialCanalId: '', identificadorCanal: '', verifyTokenCanal: '' });
   const [novaFaq, setNovaFaq] = useState({ pergunta: '', resposta: '', palavrasChave: '' });
   const [editandoChaves, setEditandoChaves] = useState({}); // { [faqId]: texto em edicao }
+  const [iaForm, setIaForm] = useState({ iaPromptSistema: '', acoesPermitidas: [] });
+  const [salvandoIA, setSalvandoIA] = useState(false);
 
   const carregar = async () => {
     setCarregando(true);
@@ -54,6 +81,10 @@ export default function BotsClientePage() {
           credencialCanalId: b.credencialCanalId || '',
           identificadorCanal: b.identificadorCanal || '',
           verifyTokenCanal: b.verifyTokenCanal || '',
+        });
+        setIaForm({
+          iaPromptSistema: b.iaPromptSistema || '',
+          acoesPermitidas: Array.isArray(b.acoesPermitidas) ? b.acoesPermitidas : [],
         });
       }
     } finally {
@@ -121,6 +152,32 @@ export default function BotsClientePage() {
     }
   };
 
+  const alternarAcaoBot = (chave) => {
+    setIaForm((f) => ({
+      ...f,
+      acoesPermitidas: f.acoesPermitidas.includes(chave)
+        ? f.acoesPermitidas.filter((a) => a !== chave)
+        : [...f.acoesPermitidas, chave],
+    }));
+  };
+
+  const salvarIA = async () => {
+    if (!bot) return;
+    setSalvandoIA(true);
+    try {
+      const r = await api.put(`/bots/${bot.id}`, {
+        iaPromptSistema: iaForm.iaPromptSistema.trim() || null,
+        acoesPermitidas: iaForm.acoesPermitidas,
+      });
+      setBot((b) => ({ ...b, ...r.data }));
+      toast.success('Configuração da IA salva.');
+    } catch (e) {
+      toast.error(e.response?.data?.erro || 'Falha ao salvar a configuração da IA.');
+    } finally {
+      setSalvandoIA(false);
+    }
+  };
+
   const adicionarFaq = async () => {
     if (!novaFaq.pergunta.trim() || !novaFaq.resposta.trim()) return toast.error('Preencha pergunta e resposta.');
     try {
@@ -181,8 +238,9 @@ export default function BotsClientePage() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-[var(--text-main)]">Bot WhatsApp</h1>
           <p className="text-sm text-[var(--text-muted)] mt-1">
-            Configure o atendimento automatico por menu (sem IA): o bot responde com base
-            nas perguntas e respostas abaixo.
+            {bot?.iaAtiva
+              ? 'Configure o que a IA sabe sobre sua empresa e o que ela pode fazer sozinha durante o atendimento.'
+              : 'Configure o atendimento automatico por menu (sem IA): o bot responde com base nas perguntas e respostas abaixo.'}
           </p>
         </div>
         {bot && (
@@ -206,6 +264,66 @@ export default function BotsClientePage() {
             description="Crie o bot do seu WhatsApp para comecar a configurar a conexao e o atendimento."
             action={<Button variant="primary" icon={Plus} onClick={criarBot}>Criar bot</Button>}
           />
+        </Card>
+      ) : bot.iaAtiva ? (
+        <Card padding="md">
+          <CardHeader>
+            <div>
+              <CardTitle className="flex items-center gap-2">
+                <Sparkles size={16} className="text-[var(--text-muted)]" /> Atendimento com IA
+              </CardTitle>
+              <CardDescription>
+                Modelo: {bot.iaModelo}. A ativação/desativação da IA e o modelo usado são definidos pelo administrador.
+              </CardDescription>
+            </div>
+          </CardHeader>
+
+          <div className="space-y-5">
+            <Textarea
+              label={
+                <LabelAjuda
+                  texto="Informações da empresa para a IA"
+                  ajuda="Escreva em texto livre: nome do negócio, horários, políticas de troca, formas de pagamento, tom de voz. A IA usa esse texto como contexto para responder o cliente com precisão."
+                />
+              }
+              rows={8}
+              value={iaForm.iaPromptSistema}
+              onChange={(e) => setIaForm((f) => ({ ...f, iaPromptSistema: e.target.value.slice(0, TAM_MAX_PROMPT_IA) }))}
+              placeholder="Ex: Somos a Boutique Bella, funcionamos de seg a sab das 9h as 18h. Trocas em ate 7 dias com nota fiscal. Aceitamos Pix e cartao..."
+              hint={`${iaForm.iaPromptSistema.length}/${TAM_MAX_PROMPT_IA} caracteres`}
+            />
+
+            <div>
+              <div className="text-[11px] font-bold uppercase tracking-wider text-[var(--text-muted)] mb-2">
+                Ações que o bot pode fazer sozinho
+              </div>
+              <div className="space-y-2">
+                {ACOES_BOT_DISPONIVEIS.map((acao) => {
+                  const ativa = iaForm.acoesPermitidas.includes(acao.chave);
+                  return (
+                    <div
+                      key={acao.chave}
+                      className={`flex items-center justify-between gap-3 px-3 py-2.5 rounded-lg border ${
+                        ativa ? 'border-[var(--success-soft)] bg-[var(--success-soft)]/20' : 'border-[var(--border-main)] bg-[var(--bg-subtle)]/40'
+                      }`}
+                    >
+                      <div className="min-w-0">
+                        <div className="text-sm font-semibold text-[var(--text-main)]">{acao.titulo}</div>
+                        <div className="text-xs text-[var(--text-muted)] mt-0.5 leading-relaxed">{acao.descricao}</div>
+                      </div>
+                      <Switch checked={ativa} onChange={() => alternarAcaoBot(acao.chave)} ariaLabel={acao.titulo} />
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="flex justify-end">
+              <Button variant="primary" icon={Save} onClick={salvarIA} loading={salvandoIA}>
+                Salvar configuração da IA
+              </Button>
+            </div>
+          </div>
         </Card>
       ) : (
         <Card padding="md">

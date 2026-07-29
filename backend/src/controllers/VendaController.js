@@ -1,11 +1,7 @@
 const prisma = require('../prisma');
 const { helpers: caixaHelpers } = require('./CaixaController');
-
-// Numero maximo de retentativas em caso de colisao da unique
-// constraint [clienteId, numero] — acontece quando 2 vendas do mesmo
-// tenant sao criadas em paralelo. Em pratica e raro (precisa colidir
-// dentro do mesmo milissegundo) mas o retry torna a operacao segura.
-const MAX_RETRIES_NUMERO = 5;
+const { criarVenda } = require('../services/vendaService');
+const { validarCpf } = require('../utils/validacaoFiscal');
 
 // Limites sanitarios de entrada — defesa em profundidade contra valores
 // absurdos/negativos (fat-finger ou abuso). Preco negativo viraria receita
@@ -15,9 +11,44 @@ const MAX_QUANTIDADE_ITEM = 10000;
 const MAX_VALOR_UNITARIO = 1000000; // R$ 1 milhao por unidade — teto de sanidade
 const MAX_OBSERVACOES = 500;
 const MAX_METODO_PAGAMENTO = 40;
+const MAX_NOME_CLIENTE_FINAL = 120;
 // Teto de seguranca da listagem — evita findMany ilimitado em tenant grande.
 const LIMITE_LISTAGEM_PADRAO = 1000;
 const LIMITE_LISTAGEM_MAX = 2000;
+
+// Valida/normaliza os dados do cliente final digitados na hora da venda —
+// usado quando o item exige devolucao e ainda nao ha um Lead selecionado no
+// combobox. CPF normalizado pra so-digitos (mesmo padrao de crm.routes.js),
+// e validado de verdade (digito verificador) porque o Lead e criado
+// automaticamente, sem revisao humana como no CRM.
+function validarClienteFinal({ nome, telefone, cpf } = {}) {
+  const nomeSan = typeof nome === 'string' ? nome.trim().slice(0, MAX_NOME_CLIENTE_FINAL) : '';
+  const telefoneSan = typeof telefone === 'string' ? telefone.replace(/\D/g, '') : '';
+  const cpfSan = typeof cpf === 'string' ? cpf.replace(/\D/g, '') : '';
+
+  if (!nomeSan) return { erro: 'Informe o nome do cliente.', campo: 'clienteFinal.nome' };
+  if (!telefoneSan) return { erro: 'Informe o telefone do cliente.', campo: 'clienteFinal.telefone' };
+  if (!validarCpf(cpfSan)) return { erro: 'CPF do cliente invalido.', campo: 'clienteFinal.cpf' };
+
+  return { nome: nomeSan, telefone: telefoneSan, cpf: cpfSan };
+}
+
+// Resolve a data de devolucao de 1 item: usa a data explicita (se veio), ou o
+// prazo padrao do produto (agora + diasParaDevolucaoPadrao dias). Sem nenhum
+// dos dois, exige que o usuario informe manualmente. `agora` injetavel pra
+// teste determinístico.
+function resolverDataDevolucao({ dataDevolucaoInput, diasParaDevolucaoPadrao, nomeProduto, agora = new Date() }) {
+  if (dataDevolucaoInput) {
+    const d = new Date(dataDevolucaoInput);
+    if (Number.isNaN(d.getTime())) return { erro: `Data de devolucao invalida pra ${nomeProduto}.` };
+    if (d.getTime() <= agora.getTime()) return { erro: `Data de devolucao de ${nomeProduto} precisa ser no futuro.` };
+    return { data: d };
+  }
+  if (diasParaDevolucaoPadrao) {
+    return { data: new Date(agora.getTime() + diasParaDevolucaoPadrao * 24 * 60 * 60 * 1000) };
+  }
+  return { erro: `Informe a data de devolucao de ${nomeProduto}.` };
+}
 
 class VendaController {
 
@@ -32,6 +63,10 @@ class VendaController {
     // (mesma logica do bot tool).
     const {
       leadId,
+      // Dados do cliente final digitados na hora ({nome, telefone, cpf}) —
+      // usado quando o carrinho tem item com devolucao e ainda nao ha um
+      // Lead selecionado. Vira (ou reaproveita) um Lead de verdade.
+      clienteFinal,
       itens: itensInput,
       variacaoId,           // legacy
       quantidade,           // legacy
@@ -88,6 +123,7 @@ class VendaController {
 
       // Valida cada item (existe + quantidade > 0 + estoque suficiente)
       const itensValidados = [];
+      let algumItemPrecisaDevolucao = false;
       for (const item of itens) {
         const v = mapaVariacao.get(item.variacaoId);
         if (!v) {
@@ -113,7 +149,46 @@ class VendaController {
         if (!Number.isFinite(precoUnit) || precoUnit < 0 || precoUnit > MAX_VALOR_UNITARIO) {
           return res.status(422).json({ error: `Preço inválido pra ${v.produto.nome} — não pode ser negativo.`, campos: ['valorUnitario'] });
         }
-        itensValidados.push({ variacao: v, quantidade: qtd, precoUnitario: precoUnit, subtotal: precoUnit * qtd });
+
+        // Aluguel/devolucao: produto marcado exige uma data de devolucao (a
+        // explicita do item, ou o prazo padrao do produto) e, mais adiante,
+        // um cliente identificado (leadId ou clienteFinal).
+        let dataDevolucao;
+        if (v.produto.temDevolucao) {
+          algumItemPrecisaDevolucao = true;
+          const { erro: erroData, data: dataResolvida } = resolverDataDevolucao({
+            dataDevolucaoInput: item.dataDevolucao,
+            diasParaDevolucaoPadrao: v.produto.diasParaDevolucaoPadrao,
+            nomeProduto: `${v.produto.nome} (${v.nome})`,
+          });
+          if (erroData) return res.status(422).json({ error: erroData, campos: ['dataDevolucao'] });
+          dataDevolucao = dataResolvida;
+        }
+
+        itensValidados.push({
+          variacao: v, quantidade: qtd, precoUnitario: precoUnit, subtotal: precoUnit * qtd,
+          ...(dataDevolucao ? { dataDevolucao } : {}),
+        });
+      }
+
+      // Item com devolucao exige cliente identificado — ou um Lead ja
+      // existente (leadId), ou os dados digitados na hora (clienteFinal),
+      // que viram (ou reaproveitam) um Lead de verdade.
+      let leadIdEfetivo = leadId || null;
+      if (algumItemPrecisaDevolucao && !leadIdEfetivo) {
+        const { erro: erroClienteFinal, campo: campoClienteFinal, nome, telefone, cpf } = validarClienteFinal(clienteFinal);
+        if (erroClienteFinal) {
+          return res.status(422).json({
+            error: `Item com devolução precisa de um cliente identificado. ${erroClienteFinal}`,
+            campos: [campoClienteFinal],
+          });
+        }
+        let lead = await prisma.lead.findFirst({ where: { clienteId, cpf } });
+        if (!lead) lead = await prisma.lead.findFirst({ where: { clienteId, telefone } });
+        if (!lead) {
+          lead = await prisma.lead.create({ data: { clienteId, nome, telefone, cpf, origem: 'VENDA', valor: 0 } });
+        }
+        leadIdEfetivo = lead.id;
       }
 
       const valorTotalCalculado = itensValidados.reduce((acc, i) => acc + i.subtotal, 0);
@@ -128,124 +203,30 @@ class VendaController {
         });
       }
 
-      // Retry loop pro numero sequencial (mesma logica de antes).
-      let resultado;
-      let tentativa = 0;
-      while (true) {
-        try {
-          const ultimaDoTenant = await prisma.venda.findFirst({
-            where: { clienteId },
-            orderBy: { numero: 'desc' },
-            select: { numero: true },
-          });
-          const proximoNumero = (ultimaDoTenant?.numero || 0) + 1;
+      // Descricao resumida: nome do 1o item + "(+N itens)" se houver mais.
+      // Anota parcelas quando >1 (metadata pra relatorio).
+      const descPrincipal = itensValidados[0].variacao.produto.nome;
+      const parcelasNum = parseInt(parcelas, 10);
+      const sufixoParcelas = Number.isFinite(parcelasNum) && parcelasNum > 1
+        ? ` · ${parcelasNum}x ${metodoPagamentoSan === 'CREDITO' ? 'no cartão' : ''}`.trimEnd()
+        : '';
+      const descricaoVenda = observacoesSan
+        ? `${observacoesSan}${sufixoParcelas}`
+        : itensValidados.length === 1
+          ? `${descPrincipal} (${itensValidados[0].variacao.nome}) x${itensValidados[0].quantidade}${sufixoParcelas}`
+          : `${descPrincipal} +${itensValidados.length - 1} item(s)${sufixoParcelas}`;
 
-          resultado = await prisma.$transaction(async (tx) => {
-            // Descricao resumida: nome do 1o item + "(+N itens)" se houver mais.
-            // Anota parcelas quando >1 (metadata pra relatorio).
-            const descPrincipal = itensValidados[0].variacao.produto.nome;
-            const parcelasNum = parseInt(parcelas, 10);
-            const sufixoParcelas = Number.isFinite(parcelasNum) && parcelasNum > 1
-              ? ` · ${parcelasNum}x ${metodoPagamentoSan === 'CREDITO' ? 'no cartão' : ''}`.trimEnd()
-              : '';
-            const descricaoVenda = observacoesSan
-              ? `${observacoesSan}${sufixoParcelas}`
-              : itensValidados.length === 1
-                ? `${descPrincipal} (${itensValidados[0].variacao.nome}) x${itensValidados[0].quantidade}${sufixoParcelas}`
-                : `${descPrincipal} +${itensValidados.length - 1} item(s)${sufixoParcelas}`;
-
-            // 1. Venda — vinculada a sessao de caixa aberta
-            const venda = await tx.venda.create({
-              data: {
-                clienteId,
-                numero: proximoNumero,
-                leadId: leadId || null,
-                sessaoCaixaId: sessaoAberta.id,
-                valor: valorTotalCalculado,
-                metodoPagamento: metodoPagamentoSan,
-                descricao: descricaoVenda,
-                status: 'COMPLETED',
-              },
-            });
-
-            // 2. Pra cada item: movimentacao + decrementa estoque (servico nao)
-            for (const it of itensValidados) {
-              await tx.movimentacaoEstoque.create({
-                data: {
-                  variacaoId: it.variacao.id,
-                  tipo: 'VENDA',
-                  quantidade: -Math.abs(it.quantidade),
-                  // Congela o custo do momento da venda (custo medio corrente)
-                  // pra o CMV e o lucro ficarem imutaveis nos relatorios.
-                  custoUnitario: it.variacao.precoCusto ?? null,
-                  motivo: `Venda #${venda.numero}`,
-                  vendaId: venda.id,
-                },
-              });
-              if (it.variacao.produto.tipo === 'FISICO') {
-                await tx.variacaoProduto.update({
-                  where: { id: it.variacao.id },
-                  data: { estoqueAtual: { increment: -Math.abs(it.quantidade) } },
-                });
-              }
-            }
-
-            // 3. 1 LancamentoFinanceiro pra venda inteira (mais simples pra
-            // financeiro — relatorios agrupam por venda). Descricao detalhada
-            // com os itens vendidos.
-            // Agrupa itens por categoria do produto. Cada grupo vira 1
-            // LancamentoFinanceiro vinculado a mesma venda — assim relatorios
-            // por categoria ficam precisos quando venda tem produtos de
-            // categorias diferentes. Sem categoria (produto nao classificado)
-            // vira 1 grupo separado com categoriaId=null.
-            const gruposPorCat = new Map();
-            for (const it of itensValidados) {
-              const catId = it.variacao.produto.categoriaId || null;
-              if (!gruposPorCat.has(catId)) gruposPorCat.set(catId, []);
-              gruposPorCat.get(catId).push(it);
-            }
-
-            const lancamentosCriados = [];
-            for (const [catId, itensDoGrupo] of gruposPorCat.entries()) {
-              const subtotalGrupo = itensDoGrupo.reduce((acc, i) => acc + i.subtotal, 0);
-              const detalheItens = itensDoGrupo
-                .map((it) => `${it.variacao.produto.nome} (${it.variacao.nome}) x${it.quantidade}`)
-                .join(', ');
-              const lanc = await tx.lancamentoFinanceiro.create({
-                data: {
-                  clienteId,
-                  leadId: leadId || null,
-                  vendaId: venda.id,
-                  sessaoCaixaId: sessaoAberta.id,
-                  categoriaId: catId,
-                  descricao: `Receita Venda #${venda.numero}: ${detalheItens}${sufixoParcelas}`,
-                  valor: subtotalGrupo,
-                  tipo: 'RECEITA',
-                  status: 'PAGO',
-                  dataVencimento: new Date(),
-                  dataPagamento: new Date(),
-                },
-              });
-              lancamentosCriados.push(lanc);
-            }
-
-            return {
-              venda,
-              totalItens: itensValidados.length,
-              valorTotal: valorTotalCalculado,
-              lancamentos: lancamentosCriados,
-              totalLancamentos: lancamentosCriados.length,
-            };
-          });
-          break;
-        } catch (err) {
-          if (err?.code === 'P2002' && tentativa < MAX_RETRIES_NUMERO) {
-            tentativa += 1;
-            continue;
-          }
-          throw err;
-        }
-      }
+      // Nucleo transacional (venda + baixa de estoque + lancamento) vive em
+      // services/vendaService.js — reusado tambem pela confirmacao automatica
+      // de pagamento do bot (mesma logica, sem duplicar a parte arriscada).
+      const resultado = await criarVenda({
+        clienteId,
+        sessaoCaixaId: sessaoAberta.id,
+        itensValidados,
+        leadId: leadIdEfetivo,
+        metodoPagamento: metodoPagamentoSan,
+        descricaoVenda,
+      });
 
       return res.status(201).json({ success: true, data: resultado });
 
@@ -469,4 +450,8 @@ class VendaController {
   }
 }
 
-module.exports = new VendaController();
+const instancia = new VendaController();
+// Expostas pra teste unitario das regras puras (sem I/O).
+instancia.validarClienteFinal = validarClienteFinal;
+instancia.resolverDataDevolucao = resolverDataDevolucao;
+module.exports = instancia;

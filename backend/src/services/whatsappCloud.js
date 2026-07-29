@@ -28,6 +28,19 @@ function corpoTexto(para, texto) {
   };
 }
 
+// Monta o corpo de uma mensagem de documento (o catalogo em PDF, por
+// exemplo). `link` precisa ser publicamente acessivel — usar urlAssinada do
+// storage/minio.js, nunca a URL interna do bucket.
+function corpoDocumento(para, link, filename, caption) {
+  return {
+    messaging_product: 'whatsapp',
+    recipient_type: 'individual',
+    to: para,
+    type: 'document',
+    document: { link, filename, ...(caption ? { caption } : {}) },
+  };
+}
+
 // Monta o corpo de um template HSM aprovado (usado em campanhas e em
 // mensagens fora da janela de 24h). `componentes` segue o formato da Meta.
 function corpoTemplate(para, nomeTemplate, idioma = 'pt_BR', componentes = []) {
@@ -90,11 +103,18 @@ function enviarTemplate({ phoneNumberId, token, para, nomeTemplate, idioma, comp
   return enviar({ phoneNumberId, token, corpo: corpoTemplate(para, nomeTemplate, idioma, componentes) });
 }
 
+// Atalho: envia documento (catalogo em PDF).
+function enviarDocumento({ phoneNumberId, token, para, link, filename, caption }) {
+  return enviar({ phoneNumberId, token, corpo: corpoDocumento(para, link, filename, caption) });
+}
+
 module.exports = {
   enviar,
   enviarTexto,
   enviarTemplate,
+  enviarDocumento,
   corpoTexto,
   corpoTemplate,
+  corpoDocumento,
   ENVIO_REAL,
 };
