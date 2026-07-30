@@ -81,6 +81,10 @@ services:
       REDIS_URL: redis://redis:6379
       # Dentro do Docker o backend fala com o MinIO pelo nome do servico.
       MINIO_ENDPOINT: http://minio:9000
+      # Host que o NAVEGADOR usa nas URLs assinadas — defina no .env de
+      # producao (ex.: https://midia.seu-dominio, atras do proxy publico
+      # do MinIO). Sem isso, cai no ENDPOINT interno e as fotos quebram.
+      MINIO_PUBLIC_ENDPOINT: ${MINIO_PUBLIC_ENDPOINT}
     ports:
       - "${BACKEND_PORT}:3333"
     depends_on:
@@ -107,6 +111,10 @@ services:
       REDIS_URL: redis://redis:6379
       # Dentro do Docker o backend fala com o MinIO pelo nome do servico.
       MINIO_ENDPOINT: http://minio:9000
+      # Host que o NAVEGADOR usa nas URLs assinadas — defina no .env de
+      # producao (ex.: https://midia.seu-dominio, atras do proxy publico
+      # do MinIO). Sem isso, cai no ENDPOINT interno e as fotos quebram.
+      MINIO_PUBLIC_ENDPOINT: ${MINIO_PUBLIC_ENDPOINT}
     depends_on:
       backend:
         condition: service_started
