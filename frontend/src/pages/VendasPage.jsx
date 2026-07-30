@@ -22,6 +22,25 @@ const STATUS_BADGE = {
 
 const fmtBRL = (v) => Number(v ?? 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 
+// Mascaras leves — truncam pro tamanho real do documento/telefone enquanto o
+// usuario digita, em vez de deixar colar/digitar qualquer quantidade de
+// digitos e so descobrir que ta errado ao tentar salvar.
+function formatarCpf(valor) {
+  const d = String(valor || '').replace(/\D/g, '').slice(0, 11);
+  if (d.length <= 3) return d;
+  if (d.length <= 6) return `${d.slice(0, 3)}.${d.slice(3)}`;
+  if (d.length <= 9) return `${d.slice(0, 3)}.${d.slice(3, 6)}.${d.slice(6)}`;
+  return `${d.slice(0, 3)}.${d.slice(3, 6)}.${d.slice(6, 9)}-${d.slice(9)}`;
+}
+
+function formatarTelefone(valor) {
+  const d = String(valor || '').replace(/\D/g, '').slice(0, 11);
+  if (d.length <= 2) return d.length ? `(${d}` : '';
+  if (d.length <= 6) return `(${d.slice(0, 2)}) ${d.slice(2)}`;
+  if (d.length <= 10) return `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`;
+  return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
+}
+
 export default function VendasPage() {
   const toast = useToast();
   const navigate = useNavigate();
@@ -823,22 +842,25 @@ function ModalVenda({ isOpen, onClose, variacoes, leads, categorias, onSalvar })
                 label="Nome"
                 value={clienteFinal.nome}
                 onChange={(e) => setClienteFinal({ ...clienteFinal, nome: e.target.value })}
+                maxLength={120}
                 required
               />
               <Input
                 size="sm"
                 label="Telefone"
                 value={clienteFinal.telefone}
-                onChange={(e) => setClienteFinal({ ...clienteFinal, telefone: e.target.value })}
+                onChange={(e) => setClienteFinal({ ...clienteFinal, telefone: formatarTelefone(e.target.value) })}
                 placeholder="(11) 99999-9999"
+                maxLength={15}
                 required
               />
               <Input
                 size="sm"
                 label="CPF"
                 value={clienteFinal.cpf}
-                onChange={(e) => setClienteFinal({ ...clienteFinal, cpf: e.target.value })}
+                onChange={(e) => setClienteFinal({ ...clienteFinal, cpf: formatarCpf(e.target.value) })}
                 placeholder="000.000.000-00"
+                maxLength={14}
                 required
               />
             </div>
