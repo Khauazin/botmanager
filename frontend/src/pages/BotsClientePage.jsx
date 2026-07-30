@@ -279,9 +279,9 @@ export default function BotsClientePage() {
 
       {bot && (
         <div className={`grid grid-cols-2 ${bot.iaAtiva ? 'lg:grid-cols-4' : 'lg:grid-cols-3'} gap-3`}>
-          <KpiCard icon={Send} color="neutral" label="Mensagens hoje" valor={bot.mensagensHoje ?? 0} />
-          <KpiCard icon={MessageCircle} color="neutral" label="Total de mensagens" valor={bot.totalMensagens ?? 0} />
-          <KpiCard icon={Clock} color="neutral" label="Última atividade" valor={tempoRelativo(bot.ultimaAtividadeEm)} />
+          <KpiCard icon={Send} color="info" label="Mensagens hoje" valor={bot.mensagensHoje ?? 0} />
+          <KpiCard icon={MessageCircle} color="success" label="Total de mensagens" valor={bot.totalMensagens ?? 0} />
+          <KpiCard icon={Clock} color="warning" label="Última atividade" valor={tempoRelativo(bot.ultimaAtividadeEm)} />
           {bot.iaAtiva && (
             <KpiCard
               icon={Activity}

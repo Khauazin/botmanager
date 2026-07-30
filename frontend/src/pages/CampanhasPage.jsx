@@ -21,24 +21,28 @@ const SEGMENTOS = [
     valor: 'recompra',
     label: 'Sumiram após comprar',
     icon: Clock,
+    cor: 'warning',
     aviso: 'Compraram ou agendaram uma vez e não voltaram na janela escolhida. Envio ainda é manual, um a um.',
   },
   {
     valor: 'recorrentes',
     label: 'Recorrentes',
     icon: Star,
+    cor: 'success',
     aviso: 'Já compraram ou agendaram 2 vezes ou mais — bons candidatos pra fidelidade ou indicação.',
   },
   {
     valor: 'nunca-converteram',
     label: 'Nunca converteram',
     icon: UserX,
+    cor: 'danger',
     aviso: 'Entraram na base há 7 dias ou mais e nunca fecharam compra nem atendimento. Vale retomar contato.',
   },
   {
     valor: 'convertidos',
     label: 'Já converteram',
     icon: Users,
+    cor: 'accent',
     aviso: 'Todo lead que já comprou ou foi atendido pelo menos uma vez — sua base de clientes reais.',
   },
 ];
@@ -140,13 +144,15 @@ export default function CampanhasPage() {
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         {SEGMENTOS.map((s) => (
-          <button key={s.valor} type="button" onClick={() => handleMudarSegmento(s.valor)} className="text-left">
-            <KpiCard
-              icon={s.icon}
-              color={segmento === s.valor ? 'accent' : 'neutral'}
-              label={s.label}
-              valor={resumo[s.valor] ?? 0}
-            />
+          <button
+            key={s.valor}
+            type="button"
+            onClick={() => handleMudarSegmento(s.valor)}
+            className={`text-left rounded-xl transition-shadow ${
+              segmento === s.valor ? 'ring-2 ring-[var(--accent)] ring-offset-2 ring-offset-[var(--bg-page)]' : ''
+            }`}
+          >
+            <KpiCard icon={s.icon} color={s.cor} label={s.label} valor={resumo[s.valor] ?? 0} />
           </button>
         ))}
       </div>
