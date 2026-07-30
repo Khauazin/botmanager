@@ -1,9 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Receipt, Plus, RefreshCw, FileText, Download, Lock, Trash2, FileSpreadsheet } from 'lucide-react';
+import {
+  Receipt, Plus, RefreshCw, FileText, FileX, Clock as ClockIcon, Download, Lock, Trash2,
+  FileSpreadsheet, Store, Pencil,
+} from 'lucide-react';
 import {
   Card, CardHeader, CardTitle, CardDescription, Button, Badge, EmptyState,
-  Input, Select, Drawer, useToast, LabelAjuda,
+  Input, Select, Drawer, useToast, LabelAjuda, KpiCard,
 } from '../components/ui';
 import fiscalService from '../services/fiscalService';
 import credenciaisService from '../services/credenciaisService';
@@ -27,6 +30,20 @@ const STATUS_VARIANT = {
   ERRO: 'danger', CANCELADA: 'neutral',
 };
 
+// Icone + cor do avatar de cada documento na lista — bate visualmente com o
+// Badge de status ao lado, pra situacao ficar clara so de bater o olho.
+const ICONE_STATUS = {
+  PENDENTE: ClockIcon, PROCESSANDO: ClockIcon, EMITIDA: FileText,
+  ERRO: FileX, CANCELADA: FileText,
+};
+const COR_ICONE_STATUS = {
+  PENDENTE: 'bg-[var(--warning-soft)] text-[var(--warning-text)]',
+  PROCESSANDO: 'bg-[var(--warning-soft)] text-[var(--warning-text)]',
+  EMITIDA: 'bg-[var(--success-soft)] text-[var(--success-text)]',
+  ERRO: 'bg-[var(--danger-soft)] text-[var(--danger-text)]',
+  CANCELADA: 'bg-[var(--bg-subtle)] text-[var(--text-muted)]',
+};
+
 export default function FiscalPage() {
   const toast = useToast();
   const [credenciais, setCredenciais] = useState([]);
@@ -35,6 +52,9 @@ export default function FiscalPage() {
   const [salvando, setSalvando] = useState(false);
   const [drawerAberto, setDrawerAberto] = useState(false);
   const [configAtiva, setConfigAtiva] = useState(false);
+  // Config ja feita: mostra so um resumo compacto, com "Editar" pra abrir o
+  // formulario inteiro. Sem config ainda: formulario ja vem aberto.
+  const [editandoConfig, setEditandoConfig] = useState(false);
   const [form, setForm] = useState({
     provedor: '', credencialId: '', ambiente: 'HOMOLOGACAO',
     cnpj: '', regime: '', inscricao: '', csc: '', serie: '', ativo: true,
@@ -99,12 +119,32 @@ export default function FiscalPage() {
     ? credenciais.filter((c) => c.tipo === TIPO_POR_PROVEDOR[form.provedor])
     : [];
 
+  const nomeProvedorAtual = PROVEDORES.find((p) => p.id === form.provedor)?.nome || form.provedor;
+
+  const stats = useMemo(() => {
+    const agora = new Date();
+    const emitidas = documentos.filter((d) => d.status === 'EMITIDA');
+    const faturadoMes = emitidas
+      .filter((d) => {
+        const dt = d.criadoEm ? new Date(d.criadoEm) : null;
+        return dt && dt.getMonth() === agora.getMonth() && dt.getFullYear() === agora.getFullYear();
+      })
+      .reduce((acc, d) => acc + (d.valorTotal || 0), 0);
+    return {
+      total: documentos.length,
+      emitidas: emitidas.length,
+      comErro: documentos.filter((d) => d.status === 'ERRO').length,
+      faturadoMes,
+    };
+  }, [documentos]);
+
   const salvarConfig = async () => {
     if (!form.provedor) return toast.error('Escolha um emissor.');
     setSalvando(true);
     try {
       const salvo = await fiscalService.salvarConfig(form);
       setConfigAtiva(!!(salvo?.provedor && salvo?.ativo));
+      setEditandoConfig(false);
       toast.success('Configuracao fiscal salva.');
     } catch (e) {
       toast.error(e.response?.data?.erro || 'Falha ao salvar configuracao.');
@@ -170,7 +210,38 @@ export default function FiscalPage() {
         </p>
       </div>
 
-      {/* Config do emissor */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <KpiCard icon={FileText} color="neutral" label="Documentos" valor={stats.total} />
+        <KpiCard icon={FileText} color="success" label="Emitidas" valor={stats.emitidas} />
+        <KpiCard icon={FileX} color="danger" label="Com erro" valor={stats.comErro} />
+        <KpiCard icon={Receipt} color="neutral" label="Faturado (mês)" valor={fmtBRL(stats.faturadoMes)} />
+      </div>
+
+      {/* Config do emissor — resumo compacto quando ja configurado; formulario
+          completo na primeira vez ou ao clicar "Editar". */}
+      {configAtiva && !editandoConfig ? (
+        <Card padding="md">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="w-10 h-10 rounded-xl bg-[var(--bg-subtle)] flex items-center justify-center flex-shrink-0 text-[var(--text-secondary)]">
+                <Store size={18} strokeWidth={1.75} />
+              </div>
+              <div className="min-w-0">
+                <div className="text-sm font-semibold text-[var(--text-main)] truncate">
+                  {nomeProvedorAtual} · {form.ambiente === 'PRODUCAO' ? 'Produção' : 'Homologação'}
+                </div>
+                <div className="text-xs text-[var(--text-muted)] truncate">
+                  {form.razaoSocial || 'Razão social não preenchida'}{form.cnpj ? ` · CNPJ ${form.cnpj}` : ''}
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <Badge variant="success" size="sm">Ativo</Badge>
+              <Button variant="secondary" size="sm" icon={Pencil} onClick={() => setEditandoConfig(true)}>Editar</Button>
+            </div>
+          </div>
+        </Card>
+      ) : (
       <Card padding="md">
         <CardHeader>
           <div>
@@ -258,11 +329,17 @@ export default function FiscalPage() {
             <input type="checkbox" checked={form.ativo} onChange={(e) => setForm({ ...form, ativo: e.target.checked })} />
             Ativo
           </label>
-          <Button variant="primary" onClick={salvarConfig} loading={salvando} disabled={!form.provedor}>
-            Salvar configuracao
-          </Button>
+          <div className="flex items-center gap-2">
+            {configAtiva && (
+              <Button variant="secondary" onClick={() => setEditandoConfig(false)}>Cancelar</Button>
+            )}
+            <Button variant="primary" onClick={salvarConfig} loading={salvando} disabled={!form.provedor}>
+              Salvar configuracao
+            </Button>
+          </div>
         </div>
       </Card>
+      )}
 
       {/* Documentos */}
       <Card padding="md">
@@ -286,10 +363,12 @@ export default function FiscalPage() {
           />
         ) : (
           <div className="divide-y divide-[var(--border)]">
-            {documentos.map((d) => (
+            {documentos.map((d) => {
+              const IconeStatus = ICONE_STATUS[d.status] || FileText;
+              return (
               <div key={d.id} className="flex flex-wrap items-center gap-3 py-3">
-                <div className="w-9 h-9 rounded-xl bg-[var(--accent-soft)] flex items-center justify-center text-[var(--accent)]">
-                  <FileText size={16} />
+                <div className={`w-9 h-9 rounded-xl flex items-center justify-center ${COR_ICONE_STATUS[d.status] || 'bg-[var(--accent-soft)] text-[var(--accent)]'}`}>
+                  <IconeStatus size={16} />
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="text-sm font-semibold text-[var(--text-main)]">
@@ -321,7 +400,8 @@ export default function FiscalPage() {
                   Sincronizar
                 </Button>
               </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </Card>
