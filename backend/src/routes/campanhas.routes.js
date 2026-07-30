@@ -16,6 +16,7 @@ const {
   requerModuloLiberado,
   requerPermissao,
 } = require('../middlewares/permissoes.middleware');
+const { mesclarConversoes, formatarListaLeads, LIMITE_RECORRENTE, DIAS_MIN_LEAD_NOVO } = require('../services/segmentacaoLeads');
 
 const roteador = express.Router();
 roteador.use(middlewareAutenticacao);
@@ -89,6 +90,104 @@ roteador.get('/recompra', requerPermissao('CRM', 'visualizar'), async (req, res)
   } catch (erro) {
     console.error('[campanhas/recompra]', erro);
     res.status(500).json({ erro: 'Erro ao calcular a fila de recompra.' });
+  }
+});
+
+// ==========================================
+// SEGMENTACAO DE LEADS — pra fidelizar quem ja passou pela base (loja ou
+// clinica/servico). "Conversao" conta tanto VENDA quanto ATENDIMENTO
+// concluido, porque um tenant de servico nao tem venda de produto. Regras
+// puras (merge/formatacao) vivem em services/segmentacaoLeads.js.
+// ==========================================
+
+// Agrega vendas COMPLETED + agendamentos COMPLETED por lead num unico mapa.
+async function buscarConversoesPorLead(clienteId) {
+  const [vendasPorLead, agendamentosPorLead] = await Promise.all([
+    prisma.venda.groupBy({
+      by: ['leadId'],
+      where: { clienteId, status: 'COMPLETED', leadId: { not: null } },
+      _count: { _all: true },
+      _sum: { valor: true },
+      _max: { data: true },
+    }),
+    prisma.agendamento.groupBy({
+      by: ['leadId'],
+      where: { clienteId, status: 'COMPLETED', leadId: { not: null } },
+      _count: { _all: true },
+      _max: { data: true },
+    }),
+  ]);
+  return mesclarConversoes(vendasPorLead, agendamentosPorLead);
+}
+
+// Busca os dados de contato dos leads e monta a resposta.
+async function montarListaLeads(clienteId, entradas) {
+  const leadIds = entradas.map((e) => e.leadId);
+  if (leadIds.length === 0) return [];
+  const leads = await prisma.lead.findMany({
+    where: { id: { in: leadIds }, clienteId },
+    select: { id: true, nome: true, telefone: true },
+  });
+  return formatarListaLeads(entradas, leads);
+}
+
+// GET /campanhas/recorrentes — leads com 2+ compras/atendimentos concluidos.
+// Ja fidelizados; uteis pra campanha de fidelidade/indicacao.
+roteador.get('/recorrentes', requerPermissao('CRM', 'visualizar'), async (req, res) => {
+  try {
+    const clienteId = req.usuario.clienteId;
+    if (!clienteId) return res.status(400).json({ erro: 'Apenas usuarios de um tenant acessam campanhas.' });
+    const mapa = await buscarConversoesPorLead(clienteId);
+    const entradas = [...mapa.values()].filter((e) => (e.compras + e.atendimentos) >= LIMITE_RECORRENTE);
+    const leads = await montarListaLeads(clienteId, entradas);
+    res.json({ leads });
+  } catch (erro) {
+    console.error('[campanhas/recorrentes]', erro);
+    res.status(500).json({ erro: 'Erro ao buscar leads recorrentes.' });
+  }
+});
+
+// GET /campanhas/convertidos — todo lead com pelo menos 1 conversao (venda ou
+// atendimento concluido). Superset de recorrentes + fila de recompra.
+roteador.get('/convertidos', requerPermissao('CRM', 'visualizar'), async (req, res) => {
+  try {
+    const clienteId = req.usuario.clienteId;
+    if (!clienteId) return res.status(400).json({ erro: 'Apenas usuarios de um tenant acessam campanhas.' });
+    const mapa = await buscarConversoesPorLead(clienteId);
+    const leads = await montarListaLeads(clienteId, [...mapa.values()]);
+    res.json({ leads });
+  } catch (erro) {
+    console.error('[campanhas/convertidos]', erro);
+    res.status(500).json({ erro: 'Erro ao buscar leads convertidos.' });
+  }
+});
+
+// GET /campanhas/nunca-converteram — leads sem nenhuma venda/atendimento
+// concluido, cadastrados ha 7+ dias (lead novo ainda esta no funil normal,
+// nao "perdeu a chance" ainda).
+roteador.get('/nunca-converteram', requerPermissao('CRM', 'visualizar'), async (req, res) => {
+  try {
+    const clienteId = req.usuario.clienteId;
+    if (!clienteId) return res.status(400).json({ erro: 'Apenas usuarios de um tenant acessam campanhas.' });
+    const mapa = await buscarConversoesPorLead(clienteId);
+    const corte = new Date(Date.now() - DIAS_MIN_LEAD_NOVO * MS_DIA);
+    const leads = await prisma.lead.findMany({
+      where: { clienteId, criadoEm: { lte: corte }, id: { notIn: [...mapa.keys()] } },
+      select: { id: true, nome: true, telefone: true, criadoEm: true },
+      orderBy: { criadoEm: 'asc' },
+    });
+    res.json({
+      leads: leads.map((l) => ({
+        leadId: l.id,
+        nome: l.nome,
+        telefone: l.telefone,
+        criadoEm: l.criadoEm,
+        diasSemConverter: Math.floor((Date.now() - new Date(l.criadoEm).getTime()) / MS_DIA),
+      })),
+    });
+  } catch (erro) {
+    console.error('[campanhas/nunca-converteram]', erro);
+    res.status(500).json({ erro: 'Erro ao buscar leads sem conversao.' });
   }
 });
 

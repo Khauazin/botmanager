@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react';
 import {
   Bot as BotIcon, MessageCircle, Plus, Trash2, Wifi, WifiOff, Settings, Copy, Sparkles, Save,
+  Send, Activity, Clock,
 } from 'lucide-react';
 import {
   Card, CardHeader, CardTitle, CardDescription, Button, Input, Textarea, Select, Badge, IconButton,
-  EmptyState, Drawer, Switch, LabelAjuda, useToast,
+  EmptyState, Switch, LabelAjuda, useToast, KpiCard,
 } from '../components/ui';
+import Modal from '../components/Modal';
 import api, { urlPublica } from '../services/api';
 import credenciaisService from '../services/credenciaisService';
 import faqService from '../services/faqService';
@@ -42,6 +44,16 @@ const ACOES_BOT_DISPONIVEIS = [
   },
 ];
 
+function tempoRelativo(dataIso) {
+  if (!dataIso) return '—';
+  const diff = (Date.now() - new Date(dataIso).getTime()) / 1000;
+  if (diff < 60) return 'agora';
+  if (diff < 3600) return `há ${Math.floor(diff / 60)} min`;
+  if (diff < 86400) return `há ${Math.floor(diff / 3600)} h`;
+  if (diff < 172800) return 'ontem';
+  return `há ${Math.floor(diff / 86400)} dias`;
+}
+
 function gerarVerifyToken() {
   let s = '';
   const arr = new Uint8Array(16);
@@ -63,6 +75,7 @@ export default function BotsClientePage() {
   const [editandoChaves, setEditandoChaves] = useState({}); // { [faqId]: texto em edicao }
   const [iaForm, setIaForm] = useState({ iaPromptSistema: '', acoesPermitidas: [] });
   const [salvandoIA, setSalvandoIA] = useState(false);
+  const [consumoIA, setConsumoIA] = useState(null);
 
   const carregar = async () => {
     setCarregando(true);
@@ -96,6 +109,14 @@ export default function BotsClientePage() {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch on mount
     carregar();
   }, []);
+
+  // Consumo de IA do mes — so faz sentido buscar quando o bot tem IA ligada.
+  useEffect(() => {
+    if (!bot?.id || !bot.iaAtiva) return;
+    api.get(`/bots/${bot.id}/consumo-ia`)
+      .then((r) => setConsumoIA(r.data))
+      .catch(() => setConsumoIA(null));
+  }, [bot?.id, bot?.iaAtiva]);
 
   const credsWhatsapp = credenciais.filter((c) => c.tipo === TIPO_CRED_WHATSAPP);
   const online = bot?.status === 'ONLINE';
@@ -256,6 +277,22 @@ export default function BotsClientePage() {
         )}
       </div>
 
+      {bot && (
+        <div className={`grid grid-cols-2 ${bot.iaAtiva ? 'lg:grid-cols-4' : 'lg:grid-cols-3'} gap-3`}>
+          <KpiCard icon={Send} color="neutral" label="Mensagens hoje" valor={bot.mensagensHoje ?? 0} />
+          <KpiCard icon={MessageCircle} color="neutral" label="Total de mensagens" valor={bot.totalMensagens ?? 0} />
+          <KpiCard icon={Clock} color="neutral" label="Última atividade" valor={tempoRelativo(bot.ultimaAtividadeEm)} />
+          {bot.iaAtiva && (
+            <KpiCard
+              icon={Activity}
+              color="accent"
+              label="Consumo de IA (mês)"
+              valor={consumoIA ? `${consumoIA.tokensUsados.toLocaleString('pt-BR')} / ${consumoIA.tokensIncluidosMes.toLocaleString('pt-BR')}` : '—'}
+            />
+          )}
+        </div>
+      )}
+
       {!bot ? (
         <Card padding="md">
           <EmptyState
@@ -399,11 +436,12 @@ export default function BotsClientePage() {
         </Card>
       )}
 
-      <Drawer
+      <Modal
         isOpen={conexaoAberta}
         onClose={() => setConexaoAberta(false)}
         title="Conexao do WhatsApp"
         description="Numero, verify token e credencial do canal — mexe uma vez, na configuracao."
+        size="lg"
       >
         <div className="space-y-5">
           <div className="space-y-4">
@@ -471,7 +509,7 @@ export default function BotsClientePage() {
         <div className="flex justify-end mt-5">
           <Button variant="primary" onClick={salvarCanal} loading={salvandoCanal}>Salvar conexao</Button>
         </div>
-      </Drawer>
+      </Modal>
     </div>
   );
 }
