@@ -25,6 +25,22 @@ test('validarClienteFinal rejeita sem telefone', () => {
   assert.strictEqual(r.campo, 'clienteFinal.telefone');
 });
 
+test('validarClienteFinal rejeita telefone com digitos demais ou de menos', () => {
+  const curto = validarClienteFinal({ nome: 'Ana', telefone: '119999', cpf: CPF_VALIDO });
+  assert.ok(curto.erro);
+  assert.strictEqual(curto.campo, 'clienteFinal.telefone');
+
+  const longo = validarClienteFinal({ nome: 'Ana', telefone: '629959999999999999999', cpf: CPF_VALIDO });
+  assert.ok(longo.erro);
+  assert.strictEqual(longo.campo, 'clienteFinal.telefone');
+});
+
+test('validarClienteFinal aceita telefone fixo (10 digitos) alem do celular (11)', () => {
+  const r = validarClienteFinal({ nome: 'Ana', telefone: '1133334444', cpf: CPF_VALIDO });
+  assert.strictEqual(r.erro, undefined);
+  assert.strictEqual(r.telefone, '1133334444');
+});
+
 test('validarClienteFinal rejeita cpf invalido (digito verificador errado)', () => {
   const r = validarClienteFinal({ nome: 'Ana', telefone: '11999998888', cpf: '111.444.777-00' });
   assert.ok(r.erro);

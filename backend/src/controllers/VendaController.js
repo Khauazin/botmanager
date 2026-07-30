@@ -27,7 +27,9 @@ function validarClienteFinal({ nome, telefone, cpf } = {}) {
   const cpfSan = typeof cpf === 'string' ? cpf.replace(/\D/g, '') : '';
 
   if (!nomeSan) return { erro: 'Informe o nome do cliente.', campo: 'clienteFinal.nome' };
-  if (!telefoneSan) return { erro: 'Informe o telefone do cliente.', campo: 'clienteFinal.telefone' };
+  if (telefoneSan.length < 10 || telefoneSan.length > 11) {
+    return { erro: 'Telefone invalido — use DDD + numero (10 ou 11 digitos).', campo: 'clienteFinal.telefone' };
+  }
   if (!validarCpf(cpfSan)) return { erro: 'CPF do cliente invalido.', campo: 'clienteFinal.cpf' };
 
   return { nome: nomeSan, telefone: telefoneSan, cpf: cpfSan };
