@@ -1182,7 +1182,7 @@ function ModalProduto({ isOpen, onClose, categorias, onSalvar }) {
   const [form, setForm] = useState({
     nome: '', descricao: '', categoriaId: '', tipo: 'FISICO', imagemUrl: '',
     nomeVariacao: 'Padrao', sku: '', preco: 0, precoCusto: '', lucroTipo: 'VALOR', lucroValor: '',
-    estoqueAtual: '', estoqueMinimo: '', estoqueIdeal: '', duracaoMin: '', imagemVariacaoUrl: '',
+    estoqueAtual: '', estoqueMinimo: '', estoqueIdeal: '', duracaoMin: '',
     temDevolucao: false, diasParaDevolucaoPadrao: '',
   });
   const [tempsParaLimpar, setTempsParaLimpar] = useState([]);
@@ -1192,7 +1192,7 @@ function ModalProduto({ isOpen, onClose, categorias, onSalvar }) {
       setForm({
         nome: '', descricao: '', categoriaId: '', tipo: 'FISICO', imagemUrl: '',
         nomeVariacao: 'Padrao', sku: '', preco: 0, precoCusto: 0, lucroTipo: 'VALOR', lucroValor: 0,
-        estoqueAtual: 0, estoqueMinimo: 0, estoqueIdeal: 0, duracaoMin: '', imagemVariacaoUrl: '',
+        estoqueAtual: 0, estoqueMinimo: 0, estoqueIdeal: 0, duracaoMin: '',
         temDevolucao: false, diasParaDevolucaoPadrao: '',
       });
       setTempsParaLimpar([]);
@@ -1205,6 +1205,10 @@ function ModalProduto({ isOpen, onClose, categorias, onSalvar }) {
     onClose();
   };
 
+  // Uma unica foto no cadastro (a do produto) — a variacao "Padrao" herda ela
+  // automaticamente na exibicao (ver fallback em CardProdutoSelecionado e no
+  // modal de edicao). So versoes diferentes do MESMO produto (cor, tamanho)
+  // ganham foto propria depois, editando a variacao.
   const handleUploadProduto = async (file) => {
     const url = await catalogoService.uploadImagemTemp(file);
     setTempsParaLimpar((prev) => [...prev, url]);
@@ -1217,20 +1221,6 @@ function ModalProduto({ isOpen, onClose, categorias, onSalvar }) {
       setTempsParaLimpar((prev) => prev.filter((u) => u !== form.imagemUrl));
     }
     setForm((prev) => ({ ...prev, imagemUrl: '' }));
-  };
-
-  const handleUploadVariacao = async (file) => {
-    const url = await catalogoService.uploadImagemTemp(file);
-    setTempsParaLimpar((prev) => [...prev, url]);
-    setForm((prev) => ({ ...prev, imagemVariacaoUrl: url }));
-  };
-
-  const handleRemoverImagemVariacao = async () => {
-    if (form.imagemVariacaoUrl) {
-      await catalogoService.removerImagemTemp(form.imagemVariacaoUrl);
-      setTempsParaLimpar((prev) => prev.filter((u) => u !== form.imagemVariacaoUrl));
-    }
-    setForm((prev) => ({ ...prev, imagemVariacaoUrl: '' }));
   };
 
   const handleSubmit = (e) => {
@@ -1263,7 +1253,8 @@ function ModalProduto({ isOpen, onClose, categorias, onSalvar }) {
         estoqueAtual: parseInt(form.estoqueAtual) || 0,
         estoqueMinimo: parseInt(form.estoqueMinimo) || 0,
         estoqueIdeal: parseInt(form.estoqueIdeal) || 0,
-        imagemUrl: form.imagemVariacaoUrl || null,
+        // Sem foto propria — herda a do produto acima (fallback ja existente).
+        imagemUrl: null,
       }],
     });
     setTempsParaLimpar([]);
@@ -1291,12 +1282,17 @@ function ModalProduto({ isOpen, onClose, categorias, onSalvar }) {
         )}
 
         <div className="flex items-start gap-4">
-          <UploadImagem
-            imagemUrl={form.imagemUrl || null}
-            onUpload={handleUploadProduto}
-            onRemover={handleRemoverImagemProduto}
-            tamanho="md"
-          />
+          <div>
+            <label className="block text-xs font-semibold tracking-wide text-[var(--text-secondary)] mb-1.5">
+              Foto do produto
+            </label>
+            <UploadImagem
+              imagemUrl={form.imagemUrl || null}
+              onUpload={handleUploadProduto}
+              onRemover={handleRemoverImagemProduto}
+              tamanho="md"
+            />
+          </div>
           <div className="flex-1 min-w-0 space-y-4">
             <Input
               size="lg"
@@ -1336,28 +1332,20 @@ function ModalProduto({ isOpen, onClose, categorias, onSalvar }) {
         <div className="border-t border-[var(--border-main)] pt-5">
           <div className="text-sm font-semibold uppercase tracking-wider text-[var(--text-muted)] mb-4">Preço e quantidade</div>
 
-          <div className="flex items-start gap-4 mb-4">
-            <UploadImagem
-              imagemUrl={form.imagemVariacaoUrl || null}
-              onUpload={handleUploadVariacao}
-              onRemover={handleRemoverImagemVariacao}
-              tamanho="sm"
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+            <Input
+              size="lg"
+              label={rotuloAjuda('Tem cor/tamanho diferente?', "Ex.: 'Tamanho M', 'Cor azul'. Se o produto vem em uma versão só, deixe 'Padrão'. Dá pra dar uma foto própria pra cada versão depois, editando o produto.")}
+              value={form.nomeVariacao}
+              onChange={(e) => setForm({ ...form, nomeVariacao: e.target.value })}
+              required
             />
-            <div className="flex-1 min-w-0 grid grid-cols-1 md:grid-cols-2 gap-4">
-              <Input
-                size="lg"
-                label={rotuloAjuda('Tem cor/tamanho diferente?', "Ex.: 'Tamanho M', 'Cor azul'. Se o produto vem em uma versão só, deixe 'Padrão'.")}
-                value={form.nomeVariacao}
-                onChange={(e) => setForm({ ...form, nomeVariacao: e.target.value })}
-                required
-              />
-              <Input
-                size="lg"
-                label={rotuloAjuda('Código do produto', 'Um apelido seu pra achar rápido (também chamado de SKU). Opcional.')}
-                value={form.sku}
-                onChange={(e) => setForm({ ...form, sku: e.target.value })}
-              />
-            </div>
+            <Input
+              size="lg"
+              label={rotuloAjuda('Código do produto', 'Um apelido seu pra achar rápido (também chamado de SKU). Opcional.')}
+              value={form.sku}
+              onChange={(e) => setForm({ ...form, sku: e.target.value })}
+            />
           </div>
 
           <CampoCustoLucro form={form} setForm={setForm} />
