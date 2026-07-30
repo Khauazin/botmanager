@@ -9,6 +9,7 @@ const {
 } = require('../middlewares/permissoes.middleware');
 const { MODELOS_VALIDOS } = require('../adapters/ia/deepseek');
 const { REGISTRO: FERRAMENTAS_VALIDAS } = require('../services/iaFerramentas');
+const { periodoAtual } = require('../services/iaRouter');
 
 const roteador = express.Router();
 roteador.use(middlewareAutenticacao);
@@ -165,6 +166,37 @@ roteador.get('/:id', requerPermissao('BOTS', 'visualizar'), async (req, res) => 
   } catch (erro) {
     console.error('[bots/get]', erro);
     res.status(500).json({ erro: 'Erro ao buscar bot' });
+  }
+});
+
+// ==========================================
+// CONSUMO DE IA DO MES ATUAL — visao do proprio tenant (diferente de
+// /relatorio-consumo-ia, que e admin-only e cruza todos os clientes).
+// ==========================================
+roteador.get('/:id/consumo-ia', requerPermissao('BOTS', 'visualizar'), async (req, res) => {
+  try {
+    const bot = await prisma.bot.findFirst({
+      where: { id: req.params.id, ...filtroTenant(req) },
+      select: { id: true, iaTokensIncluidosMes: true },
+    });
+    if (!bot) return res.status(404).json({ erro: 'Bot nao encontrado' });
+
+    const periodo = periodoAtual();
+    const consumo = await prisma.consumoIA.findUnique({
+      where: { botId_periodo: { botId: bot.id, periodo } },
+      select: { tokensUsados: true, tokensExcedentes: true, valorExcedenteCentavos: true },
+    });
+
+    res.json({
+      periodo,
+      tokensUsados: consumo?.tokensUsados || 0,
+      tokensIncluidosMes: bot.iaTokensIncluidosMes,
+      tokensExcedentes: consumo?.tokensExcedentes || 0,
+      valorExcedenteCentavos: consumo?.valorExcedenteCentavos || 0,
+    });
+  } catch (erro) {
+    console.error('[bots/consumo-ia]', erro);
+    res.status(500).json({ erro: 'Erro ao buscar consumo de IA.' });
   }
 });
 
