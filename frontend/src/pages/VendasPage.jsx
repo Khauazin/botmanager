@@ -510,7 +510,7 @@ function precoEfetivoVariacao(v) {
 
 function ModalVenda({ isOpen, onClose, variacoes, leads, categorias, onSalvar }) {
   const [form, setForm] = useState({
-    metodoPagamento: 'PIX', observacoes: '', leadId: '',
+    metodoPagamento: 'PIX', observacoes: '', leadId: '', cupomCodigo: '',
     // 'parcelas' e metadata: anota na descricao mas nao gera lancamentos
     // separados. Operadora do cartao paga o lojista o valor cheio.
     parcelas: 1,
@@ -533,7 +533,7 @@ function ModalVenda({ isOpen, onClose, variacoes, leads, categorias, onSalvar })
 
   useEffect(() => {
     if (isOpen) {
-      setForm({ metodoPagamento: 'PIX', observacoes: '', leadId: '', parcelas: 1 });
+      setForm({ metodoPagamento: 'PIX', observacoes: '', leadId: '', cupomCodigo: '', parcelas: 1 });
       setItens([]);
       setDatasDevolucao({});
       setClienteFinal({ nome: '', telefone: '', cpf: '' });
@@ -636,6 +636,7 @@ function ModalVenda({ isOpen, onClose, variacoes, leads, categorias, onSalvar })
       metodoPagamento: form.metodoPagamento,
       observacoes: form.observacoes,
       leadId: form.leadId || undefined,
+      cupomCodigo: form.cupomCodigo.trim() || undefined,
       ...(precisaClienteFinal ? { clienteFinal } : {}),
       // categoriaId NAO vai mais — backend agrupa por categoria do produto.
       // Parcelas so faz sentido pra credito — backend ignora se outro metodo.
@@ -866,6 +867,15 @@ function ModalVenda({ isOpen, onClose, variacoes, leads, categorias, onSalvar })
             </div>
           </div>
         )}
+
+        <Input
+          size="lg"
+          label="Cupom de desconto (opcional)"
+          value={form.cupomCodigo}
+          onChange={(e) => setForm({ ...form, cupomCodigo: e.target.value.toUpperCase() })}
+          placeholder="Ex: VOLTA10"
+          hint="O desconto é aplicado e validado ao registrar a venda."
+        />
 
         <Textarea
           size="lg"

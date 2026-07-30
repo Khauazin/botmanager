@@ -76,6 +76,8 @@ model Cliente {
   faqs                   Faq[]
   consumosIA             ConsumoIA[]
   devolucoes             Devolucao[]
+  cupons                 Cupom[]
+  campanhas              Campanha[]
   // Horario de funcionamento (JSON). Usado pelo cron pra abrir/fechar caixa
   // automatico do bot. Formato sugerido:
   //   { "abertura": "08:00", "fechamento": "18:00", "dias": [1,2,3,4,5] }
@@ -324,6 +326,7 @@ model Lead {
   lancamentosFinanceiros LancamentoFinanceiro[]
   variacoes              LeadVariacao[]
   devolucoes             Devolucao[]
+  campanhaEnvios         CampanhaEnvio[]
 
   @@map("leads")
 }
@@ -468,6 +471,11 @@ model Venda {
   // caixa aberto. Pra venda do bot, criada AUTO se nao tem nenhum.
   sessaoCaixaId          String?
   valor                  Float
+  // Preenchidos so quando um cupom foi aplicado — valor acima e o JA com
+  // desconto (o que efetivamente entra no caixa/lancamento). valorAntesDesconto
+  // preserva o preco cheio pra auditoria/relatorio.
+  cupomId                String?
+  valorAntesDesconto     Float?
   metodoPagamento        String?
   status                 StatusVenda            @default(COMPLETED)
   descricao              String?
@@ -483,6 +491,7 @@ model Venda {
   atualizadoEm           DateTime               @updatedAt
   cliente                Cliente                @relation(fields: [clienteId], references: [id], onDelete: Cascade)
   lead                   Lead?                  @relation(fields: [leadId], references: [id])
+  cupom                  Cupom?                 @relation(fields: [cupomId], references: [id])
   sessao                 SessaoCaixa?           @relation(fields: [sessaoCaixaId], references: [id], onDelete: SetNull)
   agendamento            Agendamento?           @relation(fields: [agendamentoId], references: [id], onDelete: SetNull)
   lancamentosFinanceiros LancamentoFinanceiro[]
@@ -611,6 +620,94 @@ model Devolucao {
   @@index([clienteId, dataDevolucao])
   @@index([vendaId])
   @@map("devolucoes")
+}
+
+// ==========================================
+// CAMPANHAS DE FIDELIZACAO — disparo de mensagem (WhatsApp, via template
+// aprovado pela Meta) pra segmentos de leads (recompra/recorrentes/nunca
+// converteram/convertidos), com cupom de desconto opcional. Ver
+// services/campanhaService.js e jobs/worker.js (fila BullMQ).
+// ==========================================
+
+// Cupom de desconto — pode nascer solto ou vinculado a 1 campanha. Codigo
+// unico por tenant; validado na hora da venda (services/cupomService.js).
+model Cupom {
+  id           String            @id @default(uuid())
+  clienteId    String
+  codigo       String
+  tipo         TipoDescontoCupom @default(PERCENTUAL)
+  valor        Float
+  validoAte    DateTime?
+  // null = sem limite de uso.
+  usoMaximo    Int?
+  usosAtuais   Int               @default(0)
+  ativo        Boolean           @default(true)
+  criadoEm     DateTime          @default(now())
+  atualizadoEm DateTime          @updatedAt
+
+  cliente  Cliente   @relation(fields: [clienteId], references: [id], onDelete: Cascade)
+  campanha Campanha?
+  vendas   Venda[]
+
+  @@unique([clienteId, codigo])
+  @@map("cupons")
+}
+
+// Campanha: 1 disparo de mensagem pra um segmento de leads. Nasce RASCUNHO;
+// so cria os CampanhaEnvio (1 por lead do segmento) e enfileira o disparo de
+// verdade quando o usuario confirma (evita reservar lead antes da hora).
+model Campanha {
+  id           String         @id @default(uuid())
+  clienteId    String
+  nome         String
+  // 'recompra' | 'recorrentes' | 'nunca-converteram' | 'convertidos' — mesmos
+  // segmentos de services/segmentacaoLeads.js + a fila de recompra existente.
+  segmento     String
+  // So usado quando segmento = 'recompra' (janela de dias sem comprar).
+  diasRecompra Int?
+  // Texto legivel da campanha (documentacao/preview) — nao e necessariamente
+  // o corpo exato do template (a Meta so aceita o texto do template aprovado,
+  // com variaveis via `componentes`).
+  mensagem     String
+  // Nome do template HSM aprovado na Meta Business Manager. Sem isso a
+  // campanha fica travada em RASCUNHO — nao da pra disparar mensagem livre
+  // em massa (bloqueio da propria Meta fora da janela de 24h).
+  nomeTemplate String?
+  cupomId      String?        @unique
+  status       StatusCampanha @default(RASCUNHO)
+  totalAlvo    Int            @default(0)
+  totalEnviado Int            @default(0)
+  totalFalhou  Int            @default(0)
+  criadoPorId  String?
+  criadoEm     DateTime       @default(now())
+  atualizadoEm DateTime       @updatedAt
+  enviadoEm    DateTime?
+
+  cliente Cliente         @relation(fields: [clienteId], references: [id], onDelete: Cascade)
+  cupom   Cupom?          @relation(fields: [cupomId], references: [id])
+  envios  CampanhaEnvio[]
+
+  @@map("campanhas")
+}
+
+// 1 linha por lead alvo de 1 campanha — unidade de trabalho da fila BullMQ.
+// Granularidade por lead (nao por campanha inteira) pra falha de 1 envio nao
+// travar nem repetir os outros.
+model CampanhaEnvio {
+  id         String              @id @default(uuid())
+  campanhaId String
+  leadId     String
+  status     StatusEnvioCampanha @default(PENDENTE)
+  erro       String?
+  enviadoEm  DateTime?
+  criadoEm   DateTime            @default(now())
+
+  campanha Campanha @relation(fields: [campanhaId], references: [id], onDelete: Cascade)
+  lead     Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@unique([campanhaId, leadId])
+  @@index([campanhaId, status])
+  @@map("campanha_envios")
 }
 
 // ==========================================
@@ -1226,6 +1323,24 @@ enum StatusVenda {
   COMPLETED
   CANCELLED
   REFUNDED
+}
+
+enum TipoDescontoCupom {
+  PERCENTUAL
+  VALOR
+}
+
+enum StatusCampanha {
+  RASCUNHO
+  ENVIANDO
+  CONCLUIDA
+  ERRO
+}
+
+enum StatusEnvioCampanha {
+  PENDENTE
+  ENVIADO
+  FALHOU
 }
 
 enum Prioridade {

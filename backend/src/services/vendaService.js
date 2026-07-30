@@ -13,6 +13,7 @@
 // cair no mesmo milissegundo) mas o retry torna a operacao segura.
 
 const prisma = require('./../prisma');
+const { registrarUsoCupom } = require('./cupomService');
 
 const MAX_RETRIES_NUMERO = 5;
 
@@ -24,15 +25,23 @@ const MAX_RETRIES_NUMERO = 5;
  *   leadId?: string|null,
  *   metodoPagamento?: string|null,
  *   descricaoVenda: string,
+ *   cupomAplicado?: {cupomId:string, valorComDesconto:number}|null,
  *   tx?: Object,
  * }} p
  * `tx`, se informado, roda DENTRO dessa transacao existente (usado pela
  * confirmacao de pagamento, que ja abriu uma transacao pra tambem
  * abrir/reaproveitar o caixa AUTO_BOT com lock). Sem `tx`, abre a propria.
+ * `cupomAplicado`: quem chama JA validou o cupom (services/cupomService.js) —
+ * aqui so persiste o desconto e incrementa o uso, na mesma transacao da venda.
  * @returns {Promise<{venda:Object, totalItens:number, valorTotal:number, lancamentos:Array, totalLancamentos:number}>}
  */
-async function criarVenda({ clienteId, sessaoCaixaId, itensValidados, leadId = null, metodoPagamento = null, descricaoVenda, tx: txExterna }) {
-  const valorTotalCalculado = itensValidados.reduce((acc, i) => acc + i.subtotal, 0);
+async function criarVenda({ clienteId, sessaoCaixaId, itensValidados, leadId = null, metodoPagamento = null, descricaoVenda, cupomAplicado = null, tx: txExterna }) {
+  const valorBruto = itensValidados.reduce((acc, i) => acc + i.subtotal, 0);
+  const valorFinal = cupomAplicado ? cupomAplicado.valorComDesconto : valorBruto;
+  // Proporcao do desconto — aplicada em cada grupo de lancamento pra soma dos
+  // lancamentos bater com o valor de fato recebido (venda.valor), nao com o
+  // preco cheio. Sem cupom, fator = 1 (nao muda nada).
+  const fatorDesconto = valorBruto > 0 ? valorFinal / valorBruto : 1;
 
   const corpo = async (tx) => {
     const venda = await tx.venda.create({
@@ -41,12 +50,18 @@ async function criarVenda({ clienteId, sessaoCaixaId, itensValidados, leadId = n
         numero: await proximoNumero(tx, clienteId),
         leadId: leadId || null,
         sessaoCaixaId,
-        valor: valorTotalCalculado,
+        valor: valorFinal,
+        cupomId: cupomAplicado?.cupomId || null,
+        valorAntesDesconto: cupomAplicado ? valorBruto : null,
         metodoPagamento: metodoPagamento || null,
         descricao: descricaoVenda,
         status: 'COMPLETED',
       },
     });
+
+    if (cupomAplicado) {
+      await registrarUsoCupom(tx, cupomAplicado.cupomId);
+    }
 
     for (const it of itensValidados) {
       await tx.movimentacaoEstoque.create({
@@ -98,6 +113,8 @@ async function criarVenda({ clienteId, sessaoCaixaId, itensValidados, leadId = n
     const lancamentosCriados = [];
     for (const [catId, itensDoGrupo] of gruposPorCat.entries()) {
       const subtotalGrupo = itensDoGrupo.reduce((acc, i) => acc + i.subtotal, 0);
+      // Desconto do cupom rateado proporcionalmente entre os grupos.
+      const subtotalComDesconto = Math.round(subtotalGrupo * fatorDesconto * 100) / 100;
       const detalheItens = itensDoGrupo
         .map((it) => `${it.variacao.produto.nome} (${it.variacao.nome}) x${it.quantidade}`)
         .join(', ');
@@ -108,8 +125,8 @@ async function criarVenda({ clienteId, sessaoCaixaId, itensValidados, leadId = n
           vendaId: venda.id,
           sessaoCaixaId,
           categoriaId: catId,
-          descricao: `Receita Venda #${venda.numero}: ${detalheItens}`,
-          valor: subtotalGrupo,
+          descricao: `Receita Venda #${venda.numero}: ${detalheItens}${cupomAplicado ? ' (com cupom)' : ''}`,
+          valor: subtotalComDesconto,
           tipo: 'RECEITA',
           status: 'PAGO',
           dataVencimento: new Date(),
@@ -122,7 +139,7 @@ async function criarVenda({ clienteId, sessaoCaixaId, itensValidados, leadId = n
     return {
       venda,
       totalItens: itensValidados.length,
-      valorTotal: valorTotalCalculado,
+      valorTotal: valorFinal,
       lancamentos: lancamentosCriados,
       totalLancamentos: lancamentosCriados.length,
     };

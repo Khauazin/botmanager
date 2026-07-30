@@ -2,6 +2,7 @@ const prisma = require('../prisma');
 const { helpers: caixaHelpers } = require('./CaixaController');
 const { criarVenda } = require('../services/vendaService');
 const { validarCpf } = require('../utils/validacaoFiscal');
+const { buscarCupom, validarCupom } = require('../services/cupomService');
 
 // Limites sanitarios de entrada — defesa em profundidade contra valores
 // absurdos/negativos (fat-finger ou abuso). Preco negativo viraria receita
@@ -75,6 +76,7 @@ class VendaController {
       valorTotal,           // legacy
       metodoPagamento,
       observacoes,
+      cupomCodigo,
       // categoriaId no body e IGNORADO — categoria agora vem do produto de
       // cada item, e backend gera 1 lancamento por categoria (relatorios
       // financeiros ficam precisos quando venda tem produtos de categorias
@@ -195,6 +197,18 @@ class VendaController {
 
       const valorTotalCalculado = itensValidados.reduce((acc, i) => acc + i.subtotal, 0);
 
+      // Cupom de desconto — opcional. Validado AQUI (nao dentro de criarVenda,
+      // que so persiste o que ja foi checado — mesmo padrao de estoque/preco).
+      let cupomAplicado = null;
+      if (typeof cupomCodigo === 'string' && cupomCodigo.trim()) {
+        const cupom = await buscarCupom(clienteId, cupomCodigo);
+        const resultado = validarCupom({ cupom, valorTotal: valorTotalCalculado });
+        if (!resultado.valido) {
+          return res.status(422).json({ error: resultado.motivo, campos: ['cupomCodigo'] });
+        }
+        cupomAplicado = { cupomId: cupom.id, valorComDesconto: resultado.valorComDesconto };
+      }
+
       // Venda manual EXIGE caixa aberto. Sem caixa, retorna 409 com codigo
       // pra frontend mostrar dialogo amigavel "Abra o caixa antes".
       const sessaoAberta = await caixaHelpers.buscarSessaoAberta(clienteId);
@@ -228,6 +242,7 @@ class VendaController {
         leadId: leadIdEfetivo,
         metodoPagamento: metodoPagamentoSan,
         descricaoVenda,
+        cupomAplicado,
       });
 
       return res.status(201).json({ success: true, data: resultado });
