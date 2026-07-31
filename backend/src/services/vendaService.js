@@ -14,6 +14,7 @@
 
 const prisma = require('./../prisma');
 const { registrarUsoCupom } = require('./cupomService');
+const { fecharLeadAutomatico } = require('./etapaLeadAuto');
 
 const MAX_RETRIES_NUMERO = 5;
 
@@ -134,6 +135,18 @@ async function criarVenda({ clienteId, sessaoCaixaId, itensValidados, leadId = n
         },
       });
       lancamentosCriados.push(lanc);
+    }
+
+    // Pagamento concluido = lead fechado no funil, seja produto, aluguel ou
+    // servico (agendamento concluido tambem passa por aqui — ver
+    // Venda.agendamentoId). Reabertura fica por conta do aviso de devolucao
+    // proxima ou de um novo contato do cliente (etapaLeadAuto.js).
+    if (leadId) {
+      await fecharLeadAutomatico(tx, {
+        clienteId,
+        leadId,
+        motivo: `Fechado automaticamente: venda #${venda.numero} concluída.`,
+      });
     }
 
     return {

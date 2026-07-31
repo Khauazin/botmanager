@@ -19,6 +19,11 @@ const TIPOS_VALIDOS = new Set([
 ]);
 
 // Categoria pra agrupar na tela (admin + cliente).
+//
+// WHATSAPP_BAILEYS_SESSION propositalmente NAO entra em TIPOS_VALIDOS acima:
+// essa credencial nunca e digitada por humano, e escrita direto pelo
+// gerenciador de conexao (services/baileys/gerenciadorConexao.js) via Prisma.
+// So esta aqui pra agrupar direito se um admin listar credenciais do tenant.
 const CATEGORIA_POR_TIPO = {
   MERCADO_PAGO_KEY: 'Pagamento',
   ASAAS_KEY: 'Pagamento',
@@ -26,6 +31,7 @@ const CATEGORIA_POR_TIPO = {
   FOCUS_NFE_KEY: 'Fiscal',
   NUVEM_FISCAL_KEY: 'Fiscal',
   WHATSAPP_CLOUD_TOKEN: 'WhatsApp',
+  WHATSAPP_BAILEYS_SESSION: 'WhatsApp',
   DEEPSEEK_KEY: 'IA',
 };
 

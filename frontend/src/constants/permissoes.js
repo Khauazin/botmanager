@@ -15,6 +15,7 @@ import {
   BarChart3,
   CreditCard,
   Receipt,
+  ShieldAlert,
 } from 'lucide-react';
 
 /**
@@ -28,6 +29,13 @@ export const MODULOS_TENANT = [
     icone: Bot,
     descricao: 'Gerenciar bots de WhatsApp. Inclui o construtor visual de fluxos e variaveis.',
     rotaApp: '/admin/bots', // rota onde o cliente acessa
+  },
+  {
+    id: 'WHATSAPP_BAILEYS',
+    nome: 'WhatsApp nao oficial (QR Code)',
+    icone: ShieldAlert,
+    descricao: 'Conexao alternativa via WhatsApp Web (sem aprovacao da Meta). Risco real de banimento do numero em uso de disparo em massa — liberar so pra cliente ciente do risco.',
+    rotaApp: '/app/bots',
   },
   {
     id: 'CRM',
@@ -112,11 +120,13 @@ export const MODULOS_TENANT = [
  * Modulos disponiveis para concessao a colaboradores (subset dos modulos do tenant).
  * Nao inclui USUARIOS (so o dono CLIENT e ADMINISTRADOR podem mexer em equipe).
  */
-// Exclui USUARIOS (so o dono mexe em equipe) e PAGAMENTOS/FISCAL (dinheiro e
+// Exclui USUARIOS (so o dono mexe em equipe), PAGAMENTOS/FISCAL (dinheiro e
 // nota — sensiveis; ficam fora da matriz de colaborador ate as telas reais +
-// um gating granular existirem; por ora so o dono/admin acessa).
+// um gating granular existirem; por ora so o dono/admin acessa) e
+// WHATSAPP_BAILEYS (risco de banimento do numero — decisao do dono/admin do
+// tenant, nao um CRUD delegavel a colaborador).
 export const MODULOS_COLABORADOR = MODULOS_TENANT.filter(
-  (m) => !['USUARIOS', 'PAGAMENTOS', 'FISCAL'].includes(m.id)
+  (m) => !['USUARIOS', 'PAGAMENTOS', 'FISCAL', 'WHATSAPP_BAILEYS'].includes(m.id)
 );
 
 /**

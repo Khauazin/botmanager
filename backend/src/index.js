@@ -49,6 +49,8 @@ const { SEGREDO_JWT } = require('./middlewares/auth.middleware');
 const { limitadorApi } = require('./middlewares/rateLimit.middleware');
 const middlewareCsrf = require('./middlewares/csrf.middleware');
 const { NOME_SESSAO, lerCookie } = require('./utils/sessaoCookie');
+const { ehAdmin } = require('./middlewares/permissoes.middleware');
+const prisma = require('./prisma');
 
 // Origens permitidas por CORS. Em desenvolvimento, libera localhost.
 // Em producao, exige a variavel CORS_ORIGINS (lista separada por virgula).
@@ -184,10 +186,47 @@ app.get('/saude', (req, res) => {
 io.on('connection', (socket) => {
   console.log('Novo cliente conectado:', socket.id, 'usuario:', socket.usuario?.id);
 
+  // Sala por bot — usada SO pelo pareamento Baileys (QR code + status), que
+  // precisa ficar restrito a quem e dono do bot. Ao contrario dos demais
+  // eventos deste arquivo (io.emit global, aceitavel pra "nome do bot
+  // mudou"), transmitir um QR code escaneavel pra qualquer sessao logada de
+  // QUALQUER tenant seria uma falha real de isolamento — quem escanear
+  // primeiro pareia. Por isso valida o dono do bot antes de entrar na sala.
+  socket.on('join_bot', async (botId) => {
+    try {
+      if (typeof botId !== 'string' || !botId) return;
+      const bot = await prisma.bot.findFirst({
+        where: ehAdmin(socket.usuario) ? { id: botId } : { id: botId, clienteId: socket.usuario?.clienteId },
+        select: { id: true },
+      });
+      if (bot) socket.join(`bot:${botId}`);
+    } catch (e) {
+      console.error('[socket join_bot]', e?.message);
+    }
+  });
+
   socket.on('disconnect', () => {
     console.log('Cliente desconectado:', socket.id);
   });
 });
+
+// Relay worker -> backend -> socket.io: o worker.js (processo separado, sem
+// req.io) publica eventos de conexao Baileys (QR/status) no Redis; aqui a
+// gente repassa pra sala do bot correspondente. Ver
+// services/baileys/gerenciadorConexao.js (quem publica).
+(function iniciarRelayBaileys() {
+  const IORedis = require('ioredis');
+  const assinante = new IORedis(process.env.REDIS_URL || 'redis://localhost:6379');
+  assinante.subscribe('baileys:eventos').catch((e) => console.error('[relay baileys] falha ao assinar canal', e?.message));
+  assinante.on('message', (_canal, mensagem) => {
+    try {
+      const { botId, tipo, dados } = JSON.parse(mensagem);
+      io.to(`bot:${botId}`).emit(tipo, dados);
+    } catch (e) {
+      console.error('[relay baileys] mensagem invalida', e?.message);
+    }
+  });
+})();
 
 const PORTA = process.env.BACKEND_PORT || 3333;
 

@@ -3,8 +3,9 @@
 // enfileira { campanhaEnvioId } — toda a logica de negocio mora aqui.
 
 const prisma = require('../prisma');
-const { enviarTemplate } = require('./whatsappCloud');
+const { criarProvedorWhatsapp } = require('../adapters/whatsapp');
 const { carregarCredencialDecifrada } = require('../credenciais');
+const { obterSocket } = require('./baileys/gerenciadorConexao');
 
 // Marca 1 envio como falho + soma no contador da campanha.
 async function marcarFalha(envio, motivo) {
@@ -36,36 +37,45 @@ async function processarEnvioCampanha(campanhaEnvioId) {
   const envio = await prisma.campanhaEnvio.findUnique({
     where: { id: campanhaEnvioId },
     include: {
-      campanha: { select: { id: true, clienteId: true, nomeTemplate: true } },
+      campanha: { select: { id: true, clienteId: true, nomeTemplate: true, mensagem: true } },
       lead: { select: { id: true, nome: true, telefone: true } },
     },
   });
   if (!envio || envio.status !== 'PENDENTE') return;
 
   if (!envio.lead.telefone) return marcarFalha(envio, 'Lead sem telefone cadastrado.');
-  if (!envio.campanha.nomeTemplate) return marcarFalha(envio, 'Campanha sem template aprovado configurado.');
 
   const bot = await prisma.bot.findFirst({
     where: { clienteId: envio.campanha.clienteId, identificadorCanal: { not: null } },
-    select: { identificadorCanal: true, credencialCanalId: true },
+    select: { id: true, provedorCanal: true, identificadorCanal: true, credencialCanalId: true },
   });
   if (!bot?.identificadorCanal || !bot.credencialCanalId) {
     return marcarFalha(envio, 'Nenhum bot com WhatsApp conectado.');
   }
 
-  const credencial = await carregarCredencialDecifrada({
-    credencialId: bot.credencialCanalId, clienteId: envio.campanha.clienteId,
-  }).catch(() => null);
-  const token = credencial?.dados?.token || credencial?.dados?.accessToken || null;
-  if (!token) return marcarFalha(envio, 'Credencial do WhatsApp invalida ou ausente.');
+  let resultado;
+  if (bot.provedorCanal === 'BAILEYS') {
+    // Sem template no WhatsApp Web — a mensagem da campanha e o texto de
+    // verdade que sai (pra Meta, esse campo e so preview: o que sai la e o
+    // template aprovado). Precisa da conexao viva (socket) do proprio worker.
+    const socket = obterSocket(bot.id);
+    if (!socket) return marcarFalha(envio, 'WhatsApp Web nao esta conectado no momento.');
+    const adapter = criarProvedorWhatsapp('BAILEYS', { modo: 'live', socket });
+    resultado = await adapter.enviarTexto({ para: envio.lead.telefone, texto: envio.campanha.mensagem });
+  } else {
+    if (!envio.campanha.nomeTemplate) return marcarFalha(envio, 'Campanha sem template aprovado configurado.');
 
-  const resultado = await enviarTemplate({
-    phoneNumberId: bot.identificadorCanal,
-    token,
-    para: envio.lead.telefone,
-    nomeTemplate: envio.campanha.nomeTemplate,
-    idioma: 'pt_BR',
-  });
+    const credencial = await carregarCredencialDecifrada({
+      credencialId: bot.credencialCanalId, clienteId: envio.campanha.clienteId,
+    }).catch(() => null);
+    const token = credencial?.dados?.token || credencial?.dados?.accessToken || null;
+    if (!token) return marcarFalha(envio, 'Credencial do WhatsApp invalida ou ausente.');
+
+    const adapter = criarProvedorWhatsapp('META_CLOUD', {
+      credencial: { dados: { accessToken: token } }, identificadorCanal: bot.identificadorCanal, modo: 'live',
+    });
+    resultado = await adapter.enviarTemplate({ para: envio.lead.telefone, nomeTemplate: envio.campanha.nomeTemplate, idioma: 'pt_BR' });
+  }
 
   if (!resultado.ok) {
     return marcarFalha(envio, resultado.erro || 'Falha no envio pelo WhatsApp.');

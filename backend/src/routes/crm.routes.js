@@ -325,6 +325,15 @@ roteador.put('/leads/:id', requerPermissao('CRM', 'editar'), async (req, res) =>
       return res.status(403).json({ error: 'Acesso negado' });
     }
 
+    // Lead fechado (ganho ou perdido) e etapa final — nao move manualmente.
+    // Reabertura so acontece automaticamente (novo contato, devolucao
+    // proxima — ver services/etapaLeadAuto.js). Outros campos do lead
+    // continuam editaveis normalmente.
+    const ETAPAS_FECHADAS = new Set(['fechado-ganho', 'fechado-perdido']);
+    if (ETAPAS_FECHADAS.has(anterior.etapa?.slug) && etapaId !== undefined && etapaId !== anterior.etapaId) {
+      return res.status(409).json({ error: 'Lead fechado nao pode ser movido manualmente.' });
+    }
+
     const clienteIdEfetivo = ehAdmin(req.usuario) ? (bodyClienteId || anterior.clienteId) : anterior.clienteId;
 
     const lead = await prisma.$transaction(async (tx) => {
@@ -466,6 +475,14 @@ roteador.delete('/leads/:id', requerPermissao('CRM', 'excluir'), async (req, res
     await prisma.lead.delete({ where: { id } });
     res.json({ message: 'Lead excluido com sucesso' });
   } catch (error) {
+    // P2003 = FK bloqueando (venda, devolucao, agendamento ou lancamento
+    // financeiro vinculados) — nunca perde rastro fiscal/financeiro apagando
+    // o lead. Mensagem clara em vez do erro cru do Prisma.
+    if (error?.code === 'P2003') {
+      return res.status(409).json({
+        error: 'Este lead tem vendas, devoluções, agendamentos ou lançamentos financeiros vinculados e não pode ser excluído. Considere movê-lo para uma etapa de encerramento em vez de excluir.',
+      });
+    }
     console.error('[crm/leads-delete]', error);
     res.status(500).json({ error: 'Erro ao excluir lead' });
   }

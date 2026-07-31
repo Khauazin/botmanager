@@ -10,6 +10,8 @@ const {
 const { MODELOS_VALIDOS } = require('../adapters/ia/deepseek');
 const { REGISTRO: FERRAMENTAS_VALIDAS } = require('../services/iaFerramentas');
 const { periodoAtual } = require('../services/iaRouter');
+const { enfileirarComandoBaileys } = require('../filas');
+const { cifrarPayload } = require('../cripto/cofreCredenciais');
 
 const roteador = express.Router();
 roteador.use(middlewareAutenticacao);
@@ -35,6 +37,11 @@ const camposBotPublicos = {
   credencialCanalId: true,
   identificadorCanal: true,
   verifyTokenCanal: true,
+  provedorCanal: true,
+  statusConexaoBaileys: true,
+  qrCodeAtual: true,
+  baileysNumeroConectado: true,
+  baileysAtualizadoEm: true,
   iaAtiva: true,
   iaModelo: true,
   iaPromptSistema: true,
@@ -365,12 +372,18 @@ roteador.patch('/:id/canal', requerPermissao('BOTS', 'editar'), async (req, res)
     const bot = await prisma.bot.findFirst({ where, select: { id: true, clienteId: true } });
     if (!bot) return res.status(404).json({ erro: 'Bot nao encontrado.' });
 
-    const { credencialCanalId, identificadorCanal, verifyTokenCanal, canal } = req.body || {};
+    const { credencialCanalId, identificadorCanal, verifyTokenCanal, canal, provedorCanal } = req.body || {};
     const data = {};
 
     if (canal !== undefined) {
       if (typeof canal !== 'string') return res.status(400).json({ erro: 'canal invalido.' });
       data.canal = canal;
+    }
+    if (provedorCanal !== undefined) {
+      if (!['META_CLOUD', 'BAILEYS'].includes(provedorCanal)) {
+        return res.status(400).json({ erro: "provedorCanal deve ser 'META_CLOUD' ou 'BAILEYS'." });
+      }
+      data.provedorCanal = provedorCanal;
     }
     if (credencialCanalId !== undefined) {
       if (credencialCanalId === null || credencialCanalId === '') {
@@ -406,5 +419,104 @@ roteador.patch('/:id/canal', requerPermissao('BOTS', 'editar'), async (req, res)
     res.status(500).json({ erro: 'Erro ao configurar canal.' });
   }
 });
+
+// ==========================================
+// WHATSAPP NAO OFICIAL (Baileys/QR Code) — pareamento via WhatsApp Web.
+// Exige o modulo WHATSAPP_BAILEYS liberado pelo admin pro tenant (risco de
+// banimento do numero reconhecido — so o admin decide quem pode correr esse
+// risco). A conexao de verdade vive no worker.js; estas rotas so enfileiram
+// o comando e devolvem 202 — o QR/status chega depois pela sala do socket.io
+// (join_bot) ou por GET /:id/canal/baileys/status como fallback.
+// ==========================================
+roteador.post(
+  '/:id/canal/baileys/conectar',
+  requerPermissao('BOTS', 'editar'),
+  requerModuloLiberado('WHATSAPP_BAILEYS'),
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      const where = ehAdmin(req.usuario) ? { id } : { id, clienteId: req.usuario.clienteId };
+      const bot = await prisma.bot.findFirst({ where, select: { id: true, clienteId: true, credencialCanalId: true } });
+      if (!bot) return res.status(404).json({ erro: 'Bot nao encontrado.' });
+
+      // Credencial WHATSAPP_BAILEYS_SESSION propria do bot — busca sempre por
+      // credencialCanalId, nunca por clienteId+tipo (Credencial nao tem botId;
+      // um tenant pode um dia ter mais de uma, seria ambiguo).
+      let credencialId = bot.credencialCanalId;
+      const credencialAtual = credencialId
+        ? await prisma.credencial.findFirst({ where: { id: credencialId, clienteId: bot.clienteId, tipo: 'WHATSAPP_BAILEYS_SESSION' } })
+        : null;
+      if (!credencialAtual) {
+        const cifrado = cifrarPayload(bot.clienteId, {});
+        const nova = await prisma.credencial.create({
+          data: {
+            clienteId: bot.clienteId,
+            tipo: 'WHATSAPP_BAILEYS_SESSION',
+            nome: 'Sessao WhatsApp Web',
+            dadosCifrados: cifrado.conteudoCifrado,
+            iv: cifrado.iv,
+            tag: cifrado.tag,
+            versaoChave: cifrado.versaoChave,
+          },
+        });
+        credencialId = nova.id;
+      }
+
+      await prisma.bot.update({
+        where: { id: bot.id },
+        data: { provedorCanal: 'BAILEYS', credencialCanalId: credencialId, statusConexaoBaileys: 'CONECTANDO' },
+      });
+
+      await enfileirarComandoBaileys('conectar', bot.id);
+      res.status(202).json({ ok: true });
+    } catch (erro) {
+      console.error('[bots/canal/baileys/conectar]', erro);
+      res.status(500).json({ erro: 'Erro ao iniciar conexao WhatsApp Web.' });
+    }
+  },
+);
+
+roteador.post(
+  '/:id/canal/baileys/desconectar',
+  requerPermissao('BOTS', 'editar'),
+  requerModuloLiberado('WHATSAPP_BAILEYS'),
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      const where = ehAdmin(req.usuario) ? { id } : { id, clienteId: req.usuario.clienteId };
+      const bot = await prisma.bot.findFirst({ where, select: { id: true, provedorCanal: true } });
+      if (!bot) return res.status(404).json({ erro: 'Bot nao encontrado.' });
+      if (bot.provedorCanal !== 'BAILEYS') {
+        return res.status(422).json({ erro: 'Este bot nao esta no provedor WhatsApp Web.' });
+      }
+
+      await enfileirarComandoBaileys('desconectar', bot.id);
+      res.status(202).json({ ok: true });
+    } catch (erro) {
+      console.error('[bots/canal/baileys/desconectar]', erro);
+      res.status(500).json({ erro: 'Erro ao desconectar WhatsApp Web.' });
+    }
+  },
+);
+
+roteador.get(
+  '/:id/canal/baileys/status',
+  requerPermissao('BOTS', 'visualizar'),
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      const where = ehAdmin(req.usuario) ? { id } : { id, clienteId: req.usuario.clienteId };
+      const bot = await prisma.bot.findFirst({
+        where,
+        select: { statusConexaoBaileys: true, qrCodeAtual: true, baileysNumeroConectado: true, baileysAtualizadoEm: true },
+      });
+      if (!bot) return res.status(404).json({ erro: 'Bot nao encontrado.' });
+      res.json(bot);
+    } catch (erro) {
+      console.error('[bots/canal/baileys/status]', erro);
+      res.status(500).json({ erro: 'Erro ao buscar status da conexao.' });
+    }
+  },
+);
 
 module.exports = roteador;
