@@ -85,12 +85,17 @@ function urlPublica(key) {
 }
 
 // Util pra extrair a key (caminho dentro do bucket) de uma URL publica.
+// Ignora query string de proposito: uma URL ASSINADA (com ?X-Amz-...) tambem
+// deve resolver pra key certa — acontece quando uma URL ja assinada acaba
+// send salva como se fosse a canonica (ex.: resposta de upload passando pelo
+// middleware global de assinatura antes de o front guardar o valor).
 function chaveDeUrl(url) {
   if (typeof url !== 'string' || !url) return null;
+  const semQuery = url.split('?')[0];
   const base = PUBLIC_ENDPOINT.replace(/\/$/, '');
   const prefixo = `${base}/${BUCKET}/`;
-  if (!url.startsWith(prefixo)) return null;
-  return decodeURI(url.slice(prefixo.length));
+  if (!semQuery.startsWith(prefixo)) return null;
+  return decodeURI(semQuery.slice(prefixo.length));
 }
 
 async function pingar() {
