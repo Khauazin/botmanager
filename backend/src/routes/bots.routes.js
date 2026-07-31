@@ -468,6 +468,7 @@ roteador.post(
       });
 
       await enfileirarComandoBaileys('conectar', bot.id);
+      console.log(`[bots/canal/baileys/conectar] bot ${bot.id}: comando enfileirado.`);
       res.status(202).json({ ok: true });
     } catch (erro) {
       console.error('[bots/canal/baileys/conectar]', erro);
@@ -491,6 +492,7 @@ roteador.post(
       }
 
       await enfileirarComandoBaileys('desconectar', bot.id);
+      console.log(`[bots/canal/baileys/desconectar] bot ${bot.id}: comando enfileirado.`);
       res.status(202).json({ ok: true });
     } catch (erro) {
       console.error('[bots/canal/baileys/desconectar]', erro);
