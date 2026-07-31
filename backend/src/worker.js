@@ -66,6 +66,7 @@ const workerBaileysComando = new Worker(
   NOME_FILA_BAILEYS_COMANDO,
   async (job) => {
     const { acao, botId } = job.data;
+    console.log(`[worker:${NOME_FILA_BAILEYS_COMANDO}] processando "${acao}" pro bot ${botId}...`);
     if (acao === 'conectar') return gerenciadorConexaoBaileys.iniciarPareamento(botId);
     if (acao === 'desconectar') return gerenciadorConexaoBaileys.desconectar(botId);
     console.error(`[worker:${NOME_FILA_BAILEYS_COMANDO}] acao desconhecida:`, acao);

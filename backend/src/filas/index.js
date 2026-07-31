@@ -97,8 +97,19 @@ async function enfileirarEnvioCampanhaBaileys(campanhaEnvioId, indiceNoLote) {
 
 // ==========================================
 // BAILEYS-COMANDO — backend (rota HTTP) -> worker (onde a conexao vive de
-// verdade). O worker so tem 1 instancia hoje; o jobId de dedup evita 2
-// comandos "conectar" empilhados por clique duplo no botao.
+// verdade). O worker so tem 1 instancia hoje.
+//
+// SEM jobId fixo de proposito: um jobId deterministico (ex: `conectar-<botId>`)
+// parecia uma boa ideia pra evitar 2 comandos empilhados por clique duplo, mas
+// o BullMQ nunca reprocessa um job com um ID que ja rodou antes (sucesso OU
+// falha) — um job "conectar" que falhou uma vez ficaria bloqueando TODA
+// tentativa seguinte pro mesmo bot, silenciosamente (o botao "Conectar"
+// pareceria nao fazer nada, sem nenhum log de erro). A protecao contra
+// clique duplo real ja existe no lugar certo — gerenciadorConexao.js checa o
+// ESTADO da conexao em memoria (`conexoes.has(botId)`), nao "ja tentei uma
+// vez", entao permite retry depois de falha sem risco de duplicar conexao viva.
+// removeOnComplete/removeOnFail baixos: e so um comando de disparo, nao
+// precisa reter historico.
 // Consumidor registrado em worker.js; logica em services/baileys/.
 // ==========================================
 const NOME_FILA_BAILEYS_COMANDO = 'baileys-comando';
@@ -108,14 +119,14 @@ function obterFilaBaileysComando() {
   if (!filaBaileysComando) {
     filaBaileysComando = new Queue(NOME_FILA_BAILEYS_COMANDO, {
       connection: criarConexaoRedis(),
-      defaultJobOptions: { attempts: 1, removeOnComplete: 100, removeOnFail: 200 },
+      defaultJobOptions: { attempts: 1, removeOnComplete: 20, removeOnFail: 20 },
     });
   }
   return filaBaileysComando;
 }
 
 async function enfileirarComandoBaileys(acao, botId) {
-  await obterFilaBaileysComando().add(acao, { acao, botId }, { jobId: `${acao}-${botId}` });
+  await obterFilaBaileysComando().add(acao, { acao, botId });
 }
 
 // Fecha as filas/conexões no shutdown.

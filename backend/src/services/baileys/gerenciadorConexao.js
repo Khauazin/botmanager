@@ -120,6 +120,7 @@ async function iniciarPareamento(botId) {
     return;
   }
 
+  console.log(`[baileys] iniciando pareamento pro bot ${botId}...`);
   await atualizarStatus(botId, { statusConexaoBaileys: 'CONECTANDO' });
 
   const { state, saveCreds } = await criarAuthState({
@@ -144,13 +145,18 @@ async function iniciarPareamento(botId) {
     const { connection, lastDisconnect, qr } = update;
 
     if (qr) {
-      const qrPng = await QRCode.toDataURL(qr).catch(() => null);
+      console.log(`[baileys] QR gerado pro bot ${botId} — aguardando leitura.`);
+      const qrPng = await QRCode.toDataURL(qr).catch((e) => {
+        console.error(`[baileys] falha ao gerar PNG do QR (bot ${botId}):`, e?.message);
+        return null;
+      });
       await atualizarStatus(botId, { statusConexaoBaileys: 'AGUARDANDO_QR', qrCodeAtual: qrPng });
       return;
     }
 
     if (connection === 'open') {
       const numero = sock.user?.id?.split(':')[0] || null;
+      console.log(`[baileys] bot ${botId} conectado como +${numero}.`);
       await atualizarStatus(botId, { statusConexaoBaileys: 'CONECTADO', qrCodeAtual: null, baileysNumeroConectado: numero, identificadorCanal: numero });
       return;
     }
@@ -159,6 +165,7 @@ async function iniciarPareamento(botId) {
       conexoes.delete(botId);
       const codigoDesconexao = lastDisconnect?.error?.output?.statusCode;
       const foiLogout = codigoDesconexao === DisconnectReason.loggedOut;
+      console.log(`[baileys] conexao do bot ${botId} fechada (codigo ${codigoDesconexao || 'desconhecido'}, logout=${foiLogout}).`);
 
       if (foiLogout) {
         // Dispositivo desvinculado no celular — limpa a sessao, exige novo QR.

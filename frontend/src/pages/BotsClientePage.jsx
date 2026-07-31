@@ -145,7 +145,14 @@ export default function BotsClientePage() {
   useEffect(() => {
     if (!conexaoAberta || !bot?.id) return;
 
-    const socket = io(import.meta.env.VITE_API_URL || 'http://localhost:3333', { withCredentials: true });
+    const socket = io(import.meta.env.VITE_API_URL || 'http://localhost:3333', {
+      withCredentials: true,
+      // Sem isso, o polling do socket.io cai na pagina de aviso do ngrok-free
+      // (ERR_NGROK_6024) em vez de chegar no backend — o axios ja manda esse
+      // header (services/api.js), mas o socket.io-client faz sua propria
+      // requisicao, por fora do axios.
+      extraHeaders: { 'ngrok-skip-browser-warning': 'true' },
+    });
     socket.emit('join_bot', bot.id);
     socket.on('baileys_status', (dados) => setStatusBaileys((s) => ({ ...s, ...dados })));
 
