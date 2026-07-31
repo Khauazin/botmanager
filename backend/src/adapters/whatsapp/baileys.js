@@ -18,8 +18,18 @@ const { ProvedorWhatsApp } = require('./ProvedorWhatsApp');
 
 const ENVIO_REAL = process.env.BAILEYS_ENVIO_REAL === '1';
 
+// O WhatsApp tem mais de um esquema de identidade: `@s.whatsapp.net` (numero
+// de telefone direto) e `@lid` ("Linked ID", identidade opaca que o WhatsApp
+// vem usando cada vez mais por privacidade — nao e o numero de telefone).
+// Se `para` ja veio como um JID completo (tem '@'), usa exatamente como
+// chegou — reconstruir a partir dos digitos perderia o sufixo certo e a
+// resposta iria pro endereco errado (bug real: log dizia "enviado" mas a
+// mensagem nunca chegava, porque ia pra um @s.whatsapp.net que ninguem
+// monitora quando o remetente na verdade era @lid).
 function paraJid(para) {
-  const digitos = String(para || '').replace(/\D/g, '');
+  const str = String(para || '');
+  if (str.includes('@')) return str;
+  const digitos = str.replace(/\D/g, '');
   return `${digitos}@s.whatsapp.net`;
 }
 

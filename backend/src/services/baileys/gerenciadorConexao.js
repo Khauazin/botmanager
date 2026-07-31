@@ -69,7 +69,11 @@ async function atualizarStatus(botId, dados) {
 async function tratarMensagemRecebida(bot, upsert) {
   if (upsert.type !== 'notify') return;
   const sock = obterSocket(bot.id);
-  if (!sock) return;
+  if (!sock) {
+    console.error(`[baileys/mensagem] bot ${bot.id}: evento chegou mas nao ha socket vivo registrado.`);
+    return;
+  }
+  console.log(`[baileys/mensagem] bot ${bot.id}: ${upsert.messages?.length || 0} mensagem(ns) recebida(s).`);
 
   const faqs = bot.iaAtiva ? [] : await prisma.faq.findMany({
     where: { clienteId: bot.clienteId, ativo: true },
@@ -84,18 +88,30 @@ async function tratarMensagemRecebida(bot, upsert) {
     const remoteJid = msg.key?.remoteJid || '';
     if (remoteJid.endsWith('@g.us')) continue;
 
+    // So tira o sufixo padrao (@s.whatsapp.net -> vira so o numero, formato
+    // que reabrirLeadPorTelefone e o resto do sistema esperam). Se vier de um
+    // JID @lid (identidade nova do WhatsApp, nao e o numero de telefone), o
+    // replace nao acha nada pra tirar e `de` fica com o @lid junto de
+    // proposito — e assim que paraJid() em adapters/whatsapp/baileys.js sabe
+    // que precisa responder pro JID exato, nao reconstruir um errado.
     const de = remoteJid.replace('@s.whatsapp.net', '');
     const texto = msg.message?.conversation
       || msg.message?.extendedTextMessage?.text
       || msg.message?.buttonsResponseMessage?.selectedDisplayText
       || msg.message?.listResponseMessage?.title
       || '';
-    if (!texto) continue;
+    if (!texto) {
+      console.log(`[baileys/mensagem] bot ${bot.id}: mensagem de ${de} sem texto reconhecido (ignorada) — tipo: ${Object.keys(msg.message || {}).join(',') || 'desconhecido'}.`);
+      continue;
+    }
+    console.log(`[baileys/mensagem] bot ${bot.id}: "${texto}" de ${de} — montando resposta...`);
 
     await processarMensagemRecebida({
       bot, texto, de, faqs, adapter,
       canalContexto: { phoneNumberId: null, token: null, telefoneCliente: de },
-    }).catch((e) => console.error(`[baileys/mensagem] falha ao processar (bot ${bot.id}):`, e?.message));
+    })
+      .then((resposta) => console.log(`[baileys/mensagem] bot ${bot.id}: resposta ${resposta?.texto ? 'enviada' : 'vazia (nada a responder)'}.`))
+      .catch((e) => console.error(`[baileys/mensagem] falha ao processar (bot ${bot.id}):`, e?.message));
   }
 
   prisma.bot.update({

@@ -73,3 +73,16 @@ test('BAILEYS enviarTemplate sempre lanca (nao existe HSM no WhatsApp Web)', asy
   const wpp = criarProvedorWhatsapp('BAILEYS', { modo: 'fixture' });
   await assert.rejects(() => wpp.enviarTemplate({ para: 'x', nomeTemplate: 'y' }), /Templates HSM/);
 });
+
+test('BAILEYS responde pro JID exato quando o remetente e @lid (nao reconstroi @s.whatsapp.net)', comBaileysEnvioReal(async (criar) => {
+  const socketFake = {
+    sendMessage: async (jid, corpo) => {
+      assert.equal(jid, '55650260406428@lid'); // NAO pode virar 55650260406428@s.whatsapp.net
+      assert.deepEqual(corpo, { text: 'oi' });
+      return { key: { id: 'XYZ' } };
+    },
+  };
+  const wpp = criar('BAILEYS', { modo: 'live', socket: socketFake });
+  const r = await wpp.enviarTexto({ para: '55650260406428@lid', texto: 'oi' });
+  assert.equal(r.ok, true);
+}));
