@@ -17,6 +17,7 @@ const prisma = require('../prisma');
 const { criarNotificacaoTenant } = require('../utils/notificacoes');
 const { enviarTexto } = require('../services/whatsappCloud');
 const { carregarCredencialDecifrada } = require('../credenciais');
+const { reabrirLeadSeFechado } = require('../services/etapaLeadAuto');
 
 const TZ = 'America/Sao_Paulo';
 
@@ -95,6 +96,16 @@ async function processarTenant(tenant) {
       }
 
       await prisma.devolucao.update({ where: { id: d.id }, data: { lembreteEnviadoEm: new Date() } });
+
+      // Devolucao se aproximando: se o lead tinha sido fechado (venda
+      // concluida), reabre pro kanban mostrar que ainda precisa de
+      // acompanhamento ate o item voltar.
+      await reabrirLeadSeFechado(prisma, {
+        clienteId: tenant.id,
+        leadId: d.leadId,
+        motivo: `Reaberto automaticamente: devolução de "${nomeProduto}" prevista para ${dataFmt}.`,
+      }).catch((e) => console.error('[cronDevolucoes] falha ao reabrir lead', e?.message));
+
       avisos++;
     } catch (e) {
       console.error(`[cronDevolucoes] falha ao processar devolucao ${d.id}:`, e?.message);

@@ -2,10 +2,15 @@
 // quem chama e a Meta, nao um usuario logado.
 //   GET  /webhooks/whatsapp  -> verificacao do endpoint (ecoa hub.challenge se
 //        o verify token casar com algum bot conectado).
-//   POST /webhooks/whatsapp  -> mensagens recebidas -> iaRouter decide entre
-//        IA (DeepSeek, se bot.iaAtiva) e o roteador de menu fixo (botRouter)
-//        -> resposta via whatsappCloud (DRY_RUN ate o App Review da Meta).
-//        Ref: erp-arquitetura-e-operacao.md §6.
+//   POST /webhooks/whatsapp  -> mensagens recebidas -> processarMensagemRecebida
+//        decide entre IA (DeepSeek, se bot.iaAtiva) e o roteador de menu fixo
+//        (botRouter) -> resposta via adapter META_CLOUD (DRY_RUN ate o App
+//        Review da Meta). Ref: erp-arquitetura-e-operacao.md §6.
+//
+// So atende bot.provedorCanal=META_CLOUD — o canal Baileys (WhatsApp Web nao
+// oficial) nao tem webhook HTTP, a mensagem chega direto no processo worker.js
+// via evento messages.upsert (ver services/baileys/gerenciadorConexao.js), que
+// chama a MESMA processarMensagemRecebida (services/whatsappInbound.js).
 //
 // Arquivo proprio (nao o webhooks.routes.js de pagamento) pra as Frentes 2 e 4
 // nao colidirem no mesmo arquivo. Montado em /webhooks no index.js.
@@ -15,9 +20,9 @@
 
 const express = require('express');
 const prisma = require('../prisma');
-const { montarRespostaBot } = require('../services/iaRouter');
-const { enviarTexto } = require('../services/whatsappCloud');
+const { processarMensagemRecebida } = require('../services/whatsappInbound');
 const { carregarCredencialDecifrada } = require('../credenciais');
+const { criarProvedorWhatsapp } = require('../adapters/whatsapp');
 
 const roteador = express.Router();
 
@@ -57,7 +62,7 @@ roteador.post('/whatsapp', async (req, res) => {
         const bot = await prisma.bot.findFirst({
           where: { identificadorCanal: String(phoneNumberId) },
           select: {
-            id: true, clienteId: true, credencialCanalId: true,
+            id: true, clienteId: true, credencialCanalId: true, provedorCanal: true,
             iaAtiva: true, iaModelo: true, iaPromptSistema: true,
             iaTokensIncluidosMes: true, iaPrecoPorMilTokensExcedenteCentavos: true,
           },
@@ -77,19 +82,21 @@ roteador.post('/whatsapp', async (req, res) => {
           const cred = await carregarCredencialDecifrada({ credencialId: bot.credencialCanalId, clienteId: bot.clienteId }).catch(() => null);
           token = cred?.dados?.token || cred?.dados?.accessToken || null;
         }
+        const adapter = criarProvedorWhatsapp('META_CLOUD', {
+          credencial: { dados: { accessToken: token } },
+          identificadorCanal: phoneNumberId,
+          modo: 'live',
+        });
 
         for (const msg of mensagens) {
           const de = msg.from;
           const texto = msg.text?.body || msg.button?.text || msg.interactive?.list_reply?.title || '';
           // canalContexto: so usado por ferramentas que enviam midia direto
           // (ex.: CATALOGO manda o PDF como documento, fora da resposta de texto).
-          const resposta = await montarRespostaBot({
-            bot, texto, faqs,
+          await processarMensagemRecebida({
+            bot, texto, de, faqs, adapter,
             canalContexto: { phoneNumberId, token, telefoneCliente: de },
           });
-          if (resposta?.texto) {
-            await enviarTexto({ phoneNumberId, token, para: de, texto: resposta.texto });
-          }
           // TODO(seam): resposta.encaminhar -> notificar a equipe (fila/atendimento).
         }
 

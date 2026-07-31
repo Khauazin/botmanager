@@ -179,6 +179,10 @@ model Bot {
   clienteId          String
   nome               String
   canal              Canal         @default(WHATSAPP)
+  // Qual driver atende esse canal: API oficial da Meta (token + aprovacao) ou
+  // WhatsApp Web nao oficial (QR Code, sem aprovacao, risco de banimento em
+  // uso de massa — ver services/baileys/ e routes/campanhas.routes.js).
+  provedorCanal      ProvedorCanal @default(META_CLOUD)
   status             StatusBot     @default(OFFLINE)
   telefone           String?
   totalMensagens     Int           @default(0)
@@ -193,6 +197,15 @@ model Bot {
   credencialCanalId  String?
   identificadorCanal String?
   verifyTokenCanal   String?
+  // Estado tecnico da conexao Baileys — vocabulario proprio, nao reaproveita
+  // StatusBot (que e so o liga/desliga manual do tenant). Null/sem sentido
+  // pra bot provedorCanal=META_CLOUD.
+  statusConexaoBaileys  StatusConexaoBaileys?
+  // QR pronto (data:image/png;base64,...) pra reabrir o modal no meio do
+  // pareamento sem esperar um novo evento de socket.
+  qrCodeAtual           String?               @db.Text
+  baileysNumeroConectado String?
+  baileysAtualizadoEm   DateTime?
   // Configuracao do menu fixo do bot (sem IA) — roteador de atendimento/
   // agendamento por opcoes. Formato livre (JSON), preenchido pela Frente 4.
   menuConfig         Json?
@@ -1274,6 +1287,22 @@ enum Canal {
   WHATSAPP
 }
 
+enum ProvedorCanal {
+  META_CLOUD
+  BAILEYS
+}
+
+// Estados do pareamento WhatsApp Web (Baileys). AGUARDANDO_QR = QR gerado,
+// esperando o cliente escanear; LOGOUT = dispositivo desvinculado no celular,
+// exige novo QR pra reconectar (nao e so uma queda de rede transitoria).
+enum StatusConexaoBaileys {
+  DESCONECTADO
+  AGUARDANDO_QR
+  CONECTANDO
+  CONECTADO
+  LOGOUT
+}
+
 enum Severidade {
   INFO
   WARNING
@@ -1290,6 +1319,10 @@ enum StatusAlerta {
 enum TipoCredencial {
   // Canais de mensagem
   WHATSAPP_CLOUD_TOKEN
+  // Sessao WhatsApp Web (Baileys) — {creds, keys} cifrado, escrito direto pelo
+  // gerenciador de conexao (services/baileys/), nunca pelas rotas manuais de
+  // credencial (ver credenciaisCore.js: propositalmente fora de TIPOS_VALIDOS).
+  WHATSAPP_BAILEYS_SESSION
   // Provedores de pagamento (PSP)
   MERCADO_PAGO_KEY
   ASAAS_KEY
@@ -1301,6 +1334,8 @@ enum TipoCredencial {
   HTTP_BEARER
   HTTP_BASIC
   HTTP_API_KEY
+  // Credencial de PLATAFORMA (unica, clienteId null — ver credenciais.js)
+  DEEPSEEK_KEY
   // Outros (extensivel)
   OUTRO
 }

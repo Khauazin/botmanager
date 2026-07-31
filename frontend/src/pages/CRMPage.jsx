@@ -130,8 +130,8 @@ export default function CRMPage() {
       toast.success('Lead excluido');
       setDrawerLead({ open: false, lead: null });
       carregar();
-    } catch {
-      toast.error('Erro ao excluir');
+    } catch (e) {
+      toast.error(e.response?.data?.error || 'Erro ao excluir');
     }
   };
 
@@ -356,12 +356,18 @@ function KanbanColumn({ stage, leads, stages, onSelecionarLead, onMoverLead, isS
   );
 }
 
+const SLUGS_ETAPA_FECHADA = new Set(['fechado-ganho', 'fechado-perdido']);
+
 function KanbanCard({ lead, stages, currentStageId, onClick, onMover }) {
   const tags = lead.tags?.split(',').map((t) => t.trim()).filter(Boolean) || [];
   const stagesOrdenadas = [...stages].sort((a, b) => (a.ordem ?? 0) - (b.ordem ?? 0));
   const idx = stagesOrdenadas.findIndex((s) => s.id === currentStageId);
-  const proxima = idx >= 0 && idx < stagesOrdenadas.length - 1 ? stagesOrdenadas[idx + 1] : null;
-  const anterior = idx > 0 ? stagesOrdenadas[idx - 1] : null;
+  // Lead fechado (ganho ou perdido) nao tem mais acao de mover — a etapa e
+  // final; reabertura so acontece automaticamente (novo contato/devolucao
+  // proxima), nunca manual.
+  const etapaFechada = idx >= 0 && SLUGS_ETAPA_FECHADA.has(stagesOrdenadas[idx].slug);
+  const proxima = !etapaFechada && idx >= 0 && idx < stagesOrdenadas.length - 1 ? stagesOrdenadas[idx + 1] : null;
+  const anterior = !etapaFechada && idx > 0 ? stagesOrdenadas[idx - 1] : null;
 
   const prioridadeColor = { HIGH: 'danger', MEDIUM: 'warning', LOW: 'neutral' }[lead.prioridade] || 'neutral';
 
@@ -400,23 +406,31 @@ function KanbanCard({ lead, stages, currentStageId, onClick, onMover }) {
           <span className="text-xs font-semibold text-[var(--text-main)] tabular-nums">{fmtBRL(lead.valor)}</span>
         ) : <span />}
         <div className="flex gap-1" onClick={(e) => e.stopPropagation()}>
-          {anterior && (
-            <button
-              title={`Mover para ${anterior.nome}`}
-              onClick={() => onMover(lead, anterior.id)}
-              className="p-1 border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-[var(--text-muted)] hover:text-[var(--text-main)] transition-colors"
-            >
-              <ArrowLeft size={12} />
-            </button>
-          )}
-          {proxima && (
-            <button
-              title={`Mover para ${proxima.nome}`}
-              onClick={() => onMover(lead, proxima.id)}
-              className="p-1 border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-[var(--text-muted)] hover:text-[var(--text-main)] transition-colors"
-            >
-              <ArrowRight size={12} />
-            </button>
+          {etapaFechada ? (
+            <span title="Lead fechado — não pode ser movido manualmente." className="p-1 text-[var(--text-muted)]">
+              <Lock size={12} />
+            </span>
+          ) : (
+            <>
+              {anterior && (
+                <button
+                  title={`Mover para ${anterior.nome}`}
+                  onClick={() => onMover(lead, anterior.id)}
+                  className="p-1 border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-[var(--text-muted)] hover:text-[var(--text-main)] transition-colors"
+                >
+                  <ArrowLeft size={12} />
+                </button>
+              )}
+              {proxima && (
+                <button
+                  title={`Mover para ${proxima.nome}`}
+                  onClick={() => onMover(lead, proxima.id)}
+                  className="p-1 border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-[var(--text-muted)] hover:text-[var(--text-main)] transition-colors"
+                >
+                  <ArrowRight size={12} />
+                </button>
+              )}
+            </>
           )}
         </div>
       </div>
@@ -918,6 +932,7 @@ function DrawerLead({ isOpen, onClose, lead, stages, onEditar, onExcluir, onMove
 
   if (!lead) return null;
   const stageAtual = stages.find((s) => s.id === lead.etapaId);
+  const etapaFechada = SLUGS_ETAPA_FECHADA.has(stageAtual?.slug);
 
   return (
     <Drawer
@@ -973,25 +988,31 @@ function DrawerLead({ isOpen, onClose, lead, stages, onEditar, onExcluir, onMove
         </div>
 
         {stages.length > 0 && (
-          <div>
-            <div className="text-xs font-semibold tracking-wide text-[var(--text-secondary)] mb-2">Mover para etapa</div>
-            <div className="flex flex-wrap gap-1.5">
-              {[...stages].sort((a, b) => (a.ordem ?? 0) - (b.ordem ?? 0)).map((s) => (
-                <button
-                  key={s.id}
-                  onClick={() => onMover(s.id)}
-                  disabled={s.id === lead.etapaId}
-                  className={`px-3 py-1.5 text-xs font-semibold border transition-colors ${
-                    s.id === lead.etapaId
-                      ? 'bg-[var(--primary)] text-[var(--text-on-primary)] border-[var(--primary)] cursor-default'
-                      : 'border-[var(--border-main)] hover:bg-[var(--bg-subtle)] text-[var(--text-secondary)]'
-                  }`}
-                >
-                  {s.nome}
-                </button>
-              ))}
+          etapaFechada ? (
+            <div className="flex items-center gap-2 px-3 py-2.5 border border-[var(--border-main)] bg-[var(--bg-subtle)]/40 text-xs text-[var(--text-muted)]">
+              <Lock size={14} /> Lead fechado — não pode ser movido manualmente. Reabre sozinho se o cliente entrar em contato de novo.
             </div>
-          </div>
+          ) : (
+            <div>
+              <div className="text-xs font-semibold tracking-wide text-[var(--text-secondary)] mb-2">Mover para etapa</div>
+              <div className="flex flex-wrap gap-1.5">
+                {[...stages].sort((a, b) => (a.ordem ?? 0) - (b.ordem ?? 0)).map((s) => (
+                  <button
+                    key={s.id}
+                    onClick={() => onMover(s.id)}
+                    disabled={s.id === lead.etapaId}
+                    className={`px-3 py-1.5 text-xs font-semibold border transition-colors ${
+                      s.id === lead.etapaId
+                        ? 'bg-[var(--primary)] text-[var(--text-on-primary)] border-[var(--primary)] cursor-default'
+                        : 'border-[var(--border-main)] hover:bg-[var(--bg-subtle)] text-[var(--text-secondary)]'
+                    }`}
+                  >
+                    {s.nome}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )
         )}
 
         {lead.tags && (

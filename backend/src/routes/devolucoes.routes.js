@@ -9,6 +9,7 @@ const {
   requerModuloLiberado,
   requerPermissao,
 } = require('../middlewares/permissoes.middleware');
+const { fecharLeadAutomatico } = require('../services/etapaLeadAuto');
 
 const roteador = express.Router();
 roteador.use(middlewareAutenticacao);
@@ -126,6 +127,17 @@ roteador.patch('/:id/concluir', requerPermissao('VENDAS', 'editar'), async (req,
           data: { estoqueAtual: { increment: devolucao.quantidade } },
         });
       }
+
+      // Devolucao concluida fecha o lead de novo — pode ter sido reaberto
+      // pelo aviso de devolucao proxima (cronDevolucoes.js).
+      if (devolucao.leadId) {
+        await fecharLeadAutomatico(tx, {
+          clienteId,
+          leadId: devolucao.leadId,
+          motivo: `Fechado automaticamente: devolução da venda #${devolucao.venda.numero} concluída.`,
+        });
+      }
+
       return d;
     });
 

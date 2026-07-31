@@ -18,7 +18,7 @@ const {
 } = require('../middlewares/permissoes.middleware');
 const { mesclarConversoes, formatarListaLeads, LIMITE_RECORRENTE, DIAS_MIN_LEAD_NOVO } = require('../services/segmentacaoLeads');
 const { normalizarCodigo } = require('../services/cupomService');
-const { enfileirarEnvioCampanha } = require('../filas');
+const { enfileirarEnvioCampanha, enfileirarEnvioCampanhaBaileys } = require('../filas');
 
 const roteador = express.Router();
 roteador.use(middlewareAutenticacao);
@@ -33,6 +33,11 @@ const SEGMENTOS_VALIDOS = new Set(['recompra', 'recorrentes', 'nunca-converteram
 const MAX_NOME_CAMPANHA = 120;
 const MAX_MENSAGEM_CAMPANHA = 1000;
 const MAX_NOME_TEMPLATE = 120;
+// Teto de seguranca pro canal nao oficial (Baileys/QR Code) — nao existe
+// template/aprovacao la, entao a trava mais barata contra "selecionar 5 mil
+// convertidos e estourar tudo de uma vez" (o padrao que a Meta mais pune com
+// banimento de numero) e limitar o tamanho do lote.
+const LIMITE_LEADS_BAILEYS = 200;
 
 // ==========================================
 // CAMPANHA — criar, listar, disparar. O cupom (se houver) nasce junto da
@@ -350,7 +355,18 @@ roteador.post('/:id/disparar', requerPermissao('CRM', 'editar'), async (req, res
     if (campanha.status !== 'RASCUNHO') {
       return res.status(422).json({ erro: 'Essa campanha ja foi disparada.' });
     }
-    if (!campanha.nomeTemplate) {
+
+    // O gate de template so faz sentido pro canal oficial (Meta bloqueia
+    // mensagem livre em massa fora da janela de 24h). O canal nao oficial
+    // (Baileys/QR Code) nao tem template — texto livre — mas em troca leva um
+    // teto de leads por disparo (risco de banimento do numero em massa).
+    const bot = await prisma.bot.findFirst({
+      where: { clienteId, identificadorCanal: { not: null } },
+      select: { provedorCanal: true },
+    });
+    const usaBaileys = bot?.provedorCanal === 'BAILEYS';
+
+    if (!usaBaileys && !campanha.nomeTemplate) {
       return res.status(422).json({
         erro: 'Configure o nome do template aprovado na Meta antes de disparar.',
         campos: ['nomeTemplate'],
@@ -360,6 +376,11 @@ roteador.post('/:id/disparar', requerPermissao('CRM', 'editar'), async (req, res
     const leadIds = await resolverLeadIdsDoSegmento(clienteId, campanha.segmento, { diasRecompra: campanha.diasRecompra || DIAS_PADRAO });
     if (leadIds.length === 0) {
       return res.status(422).json({ erro: 'Nenhum lead nesse segmento no momento — nada pra disparar.' });
+    }
+    if (usaBaileys && leadIds.length > LIMITE_LEADS_BAILEYS) {
+      return res.status(422).json({
+        erro: `O canal não oficial (WhatsApp Web) permite no máximo ${LIMITE_LEADS_BAILEYS} leads por disparo — reduza o segmento ou divida o envio em dias, pra não arriscar o número ser banido.`,
+      });
     }
 
     const envios = await prisma.$transaction(
@@ -375,8 +396,15 @@ roteador.post('/:id/disparar', requerPermissao('CRM', 'editar'), async (req, res
       data: { status: 'ENVIANDO', totalAlvo: envios.length },
     });
 
+    let indiceNoLote = 0;
     for (const envio of envios) {
-      if (envio.status === 'PENDENTE') await enfileirarEnvioCampanha(envio.id);
+      if (envio.status !== 'PENDENTE') continue;
+      if (usaBaileys) {
+        await enfileirarEnvioCampanhaBaileys(envio.id, indiceNoLote);
+        indiceNoLote += 1;
+      } else {
+        await enfileirarEnvioCampanha(envio.id);
+      }
     }
 
     res.json({ ok: true, totalAlvo: envios.length });

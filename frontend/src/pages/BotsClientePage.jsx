@@ -1,16 +1,34 @@
 import { useEffect, useState } from 'react';
+import { io } from 'socket.io-client';
 import {
   Bot as BotIcon, MessageCircle, Plus, Trash2, Wifi, WifiOff, Settings, Copy, Sparkles, Save,
-  Send, Activity, Clock,
+  Send, Activity, Clock, ShieldAlert, QrCode,
 } from 'lucide-react';
 import {
   Card, CardHeader, CardTitle, CardDescription, Button, Input, Textarea, Select, Badge, IconButton,
-  EmptyState, Switch, LabelAjuda, useToast, KpiCard,
+  EmptyState, Switch, LabelAjuda, useToast, KpiCard, Tabs, TabsList, TabsTrigger, TabsContent,
 } from '../components/ui';
 import Modal from '../components/Modal';
 import api, { urlPublica } from '../services/api';
 import credenciaisService from '../services/credenciaisService';
 import faqService from '../services/faqService';
+import { useAuthStore } from '../store/auth.store';
+
+// Rotulos humanos do status tecnico de pareamento Baileys (StatusConexaoBaileys).
+const STATUS_BAILEYS_LABEL = {
+  DESCONECTADO: 'Desconectado',
+  AGUARDANDO_QR: 'Aguardando leitura do QR Code',
+  CONECTANDO: 'Conectando...',
+  CONECTADO: 'Conectado',
+  LOGOUT: 'Sessão encerrada — escaneie o QR de novo',
+};
+const STATUS_BAILEYS_VARIANT = {
+  DESCONECTADO: 'neutral',
+  AGUARDANDO_QR: 'warning',
+  CONECTANDO: 'warning',
+  CONECTADO: 'success',
+  LOGOUT: 'danger',
+};
 
 // Tela do tenant pro bot WhatsApp: quando o bot NAO tem IA (padrao pos-pivo),
 // o conteudo principal e o menu de FAQ. Quando o administrador libera o
@@ -64,6 +82,7 @@ function gerarVerifyToken() {
 
 export default function BotsClientePage() {
   const toast = useToast();
+  const { user } = useAuthStore();
   const [bot, setBot] = useState(null);
   const [credenciais, setCredenciais] = useState([]);
   const [faqs, setFaqs] = useState([]);
@@ -71,6 +90,10 @@ export default function BotsClientePage() {
   const [salvandoCanal, setSalvandoCanal] = useState(false);
   const [conexaoAberta, setConexaoAberta] = useState(false);
   const [conexao, setConexao] = useState({ credencialCanalId: '', identificadorCanal: '', verifyTokenCanal: '' });
+  const [abaConexao, setAbaConexao] = useState('META_CLOUD');
+  const [conectandoBaileys, setConectandoBaileys] = useState(false);
+  const [desconectandoBaileys, setDesconectandoBaileys] = useState(false);
+  const [statusBaileys, setStatusBaileys] = useState({ statusConexaoBaileys: null, qrCodeAtual: null, baileysNumeroConectado: null });
   const [novaFaq, setNovaFaq] = useState({ pergunta: '', resposta: '', palavrasChave: '' });
   const [editandoChaves, setEditandoChaves] = useState({}); // { [faqId]: texto em edicao }
   const [iaForm, setIaForm] = useState({ iaPromptSistema: '', acoesPermitidas: [] });
@@ -99,6 +122,12 @@ export default function BotsClientePage() {
           iaPromptSistema: b.iaPromptSistema || '',
           acoesPermitidas: Array.isArray(b.acoesPermitidas) ? b.acoesPermitidas : [],
         });
+        setAbaConexao(b.provedorCanal || 'META_CLOUD');
+        setStatusBaileys({
+          statusConexaoBaileys: b.statusConexaoBaileys || null,
+          qrCodeAtual: b.qrCodeAtual || null,
+          baileysNumeroConectado: b.baileysNumeroConectado || null,
+        });
       }
     } finally {
       setCarregando(false);
@@ -109,6 +138,48 @@ export default function BotsClientePage() {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch on mount
     carregar();
   }, []);
+
+  // Socket.io so enquanto o modal de conexao esta aberto — o QR/status do
+  // pareamento Baileys chega em tempo real pela sala do proprio bot (ver
+  // backend/src/index.js: relay Redis -> socket.io -> sala bot:<id>).
+  useEffect(() => {
+    if (!conexaoAberta || !bot?.id) return;
+
+    const socket = io(import.meta.env.VITE_API_URL || 'http://localhost:3333', { withCredentials: true });
+    socket.emit('join_bot', bot.id);
+    socket.on('baileys_status', (dados) => setStatusBaileys((s) => ({ ...s, ...dados })));
+
+    // Semeia o estado atual (o socket so avisa sobre MUDANCAS futuras).
+    api.get(`/bots/${bot.id}/canal/baileys/status`).then((r) => setStatusBaileys(r.data)).catch(() => {});
+
+    return () => socket.disconnect();
+  }, [conexaoAberta, bot?.id]);
+
+  const conectarBaileys = async () => {
+    if (!bot) return;
+    setConectandoBaileys(true);
+    try {
+      await api.post(`/bots/${bot.id}/canal/baileys/conectar`);
+      toast.success('Pareamento iniciado — aguarde o QR Code aparecer.');
+    } catch (e) {
+      toast.error(e.response?.data?.erro || 'Falha ao iniciar a conexão.');
+    } finally {
+      setConectandoBaileys(false);
+    }
+  };
+
+  const desconectarBaileys = async () => {
+    if (!bot || !window.confirm('Desconectar o WhatsApp Web? Vai precisar escanear o QR de novo pra reconectar.')) return;
+    setDesconectandoBaileys(true);
+    try {
+      await api.post(`/bots/${bot.id}/canal/baileys/desconectar`);
+      toast.success('Desconectado.');
+    } catch (e) {
+      toast.error(e.response?.data?.erro || 'Falha ao desconectar.');
+    } finally {
+      setDesconectandoBaileys(false);
+    }
+  };
 
   // Consumo de IA do mes — so faz sentido buscar quando o bot tem IA ligada.
   useEffect(() => {
@@ -149,6 +220,7 @@ export default function BotsClientePage() {
     try {
       const r = await api.patch(`/bots/${bot.id}/canal`, {
         canal: 'WHATSAPP',
+        provedorCanal: 'META_CLOUD',
         credencialCanalId: conexao.credencialCanalId || null,
         identificadorCanal: conexao.identificadorCanal.trim() || null,
         verifyTokenCanal: conexao.verifyTokenCanal.trim() || null,
@@ -440,60 +512,113 @@ export default function BotsClientePage() {
         isOpen={conexaoAberta}
         onClose={() => setConexaoAberta(false)}
         title="Conexao do WhatsApp"
-        description="Numero, verify token e credencial do canal — mexe uma vez, na configuracao."
+        description="Escolha como o bot se conecta ao WhatsApp — mexe uma vez, na configuracao."
         size="lg"
       >
         <div className="space-y-5">
-          <div className="space-y-4">
-            <Input
-              label="Phone Number ID"
-              value={conexao.identificadorCanal}
-              onChange={(e) => setConexao({ ...conexao, identificadorCanal: e.target.value })}
-              placeholder="Ex: 1290672074119010"
-              hint="Vem do painel da Meta (Identificacao do numero de telefone). Obrigatorio: sem ele, mensagens recebidas nao chegam ao bot."
-            />
-            <Select
-              label="Credencial (token do canal)"
-              value={conexao.credencialCanalId}
-              onChange={(e) => setConexao({ ...conexao, credencialCanalId: e.target.value })}
-              options={[
-                { value: '', label: credsWhatsapp.length ? 'Selecione...' : 'Nenhuma credencial WhatsApp' },
-                ...credsWhatsapp.map((c) => ({ value: c.id, label: c.nome })),
-              ]}
-              hint={credsWhatsapp.length === 0 ? 'Cadastre a integracao do WhatsApp com o administrador.' : undefined}
-            />
-            <div>
-              <Input
-                label="Verify token"
-                value={conexao.verifyTokenCanal}
-                onChange={(e) => setConexao({ ...conexao, verifyTokenCanal: e.target.value })}
-                placeholder="Use no painel da Meta ao configurar o webhook"
-              />
-              <button
-                type="button"
-                className="text-xs text-[var(--accent)] mt-1 hover:underline"
-                onClick={() => setConexao({ ...conexao, verifyTokenCanal: gerarVerifyToken() })}
-              >
-                Gerar verify token
-              </button>
-            </div>
-          </div>
+          <Tabs value={abaConexao} onValueChange={setAbaConexao}>
+            <TabsList>
+              <TabsTrigger value="META_CLOUD">WhatsApp Cloud API (oficial)</TabsTrigger>
+              {user?.modulosLiberados?.WHATSAPP_BAILEYS && (
+                <TabsTrigger value="BAILEYS">WhatsApp Web (não oficial, QR Code)</TabsTrigger>
+              )}
+            </TabsList>
+            {!user?.modulosLiberados?.WHATSAPP_BAILEYS && (
+              <p className="text-[11px] text-[var(--text-muted)] mt-2">
+                Existe uma opção de conexão não oficial (QR Code) — fale com o administrador pra liberar.
+              </p>
+            )}
 
-          <div className="border-t border-[var(--border-main)] pt-4">
-            <label className="block text-xs font-semibold tracking-wide text-[var(--text-secondary)] mb-1.5">
-              Callback URL (cole no painel da Meta)
-            </label>
-            <div className="flex gap-1.5">
-              <Input value={urlWebhook} readOnly />
-              <IconButton
-                icon={Copy} variant="secondary" size="sm" ariaLabel="Copiar URL"
-                onClick={() => copiar(urlWebhook, 'URL')}
-              />
-            </div>
-            <p className="text-[10px] text-[var(--text-muted)] mt-1">
-              Essa URL e a mesma pra todo mundo — o que identifica o seu bot e o verify token acima.
-            </p>
-          </div>
+            <TabsContent value="META_CLOUD">
+              <div className="space-y-4">
+                <Input
+                  label="Phone Number ID"
+                  value={conexao.identificadorCanal}
+                  onChange={(e) => setConexao({ ...conexao, identificadorCanal: e.target.value })}
+                  placeholder="Ex: 1290672074119010"
+                  hint="Vem do painel da Meta (Identificacao do numero de telefone). Obrigatorio: sem ele, mensagens recebidas nao chegam ao bot."
+                />
+                <Select
+                  label="Credencial (token do canal)"
+                  value={conexao.credencialCanalId}
+                  onChange={(e) => setConexao({ ...conexao, credencialCanalId: e.target.value })}
+                  options={[
+                    { value: '', label: credsWhatsapp.length ? 'Selecione...' : 'Nenhuma credencial WhatsApp' },
+                    ...credsWhatsapp.map((c) => ({ value: c.id, label: c.nome })),
+                  ]}
+                  hint={credsWhatsapp.length === 0 ? 'Cadastre a integracao do WhatsApp com o administrador.' : undefined}
+                />
+                <div>
+                  <Input
+                    label="Verify token"
+                    value={conexao.verifyTokenCanal}
+                    onChange={(e) => setConexao({ ...conexao, verifyTokenCanal: e.target.value })}
+                    placeholder="Use no painel da Meta ao configurar o webhook"
+                  />
+                  <button
+                    type="button"
+                    className="text-xs text-[var(--accent)] mt-1 hover:underline"
+                    onClick={() => setConexao({ ...conexao, verifyTokenCanal: gerarVerifyToken() })}
+                  >
+                    Gerar verify token
+                  </button>
+                </div>
+              </div>
+
+              <div className="border-t border-[var(--border-main)] pt-4 mt-4">
+                <label className="block text-xs font-semibold tracking-wide text-[var(--text-secondary)] mb-1.5">
+                  Callback URL (cole no painel da Meta)
+                </label>
+                <div className="flex gap-1.5">
+                  <Input value={urlWebhook} readOnly />
+                  <IconButton
+                    icon={Copy} variant="secondary" size="sm" ariaLabel="Copiar URL"
+                    onClick={() => copiar(urlWebhook, 'URL')}
+                  />
+                </div>
+                <p className="text-[10px] text-[var(--text-muted)] mt-1">
+                  Essa URL e a mesma pra todo mundo — o que identifica o seu bot e o verify token acima.
+                </p>
+              </div>
+
+              <div className="flex justify-end mt-5">
+                <Button variant="primary" onClick={salvarCanal} loading={salvandoCanal}>Salvar conexao</Button>
+              </div>
+            </TabsContent>
+
+            <TabsContent value="BAILEYS">
+              <div className="space-y-4">
+                <div className="flex items-start gap-2.5 px-3.5 py-3 rounded-xl bg-[var(--warning-soft)] border border-[var(--warning-soft)]">
+                  <ShieldAlert size={16} className="text-[var(--warning)] flex-shrink-0 mt-0.5" />
+                  <p className="text-xs text-[var(--warning-text)] leading-relaxed">
+                    Conexão não oficial (WhatsApp Web via QR Code) — não passa pela Meta, sem aprovação, mas com risco real de banimento do número, principalmente em disparo de mensagens em massa. Use com moderação.
+                  </p>
+                </div>
+
+                {statusBaileys.statusConexaoBaileys && (
+                  <Badge variant={STATUS_BAILEYS_VARIANT[statusBaileys.statusConexaoBaileys] || 'neutral'} size="sm">
+                    {STATUS_BAILEYS_LABEL[statusBaileys.statusConexaoBaileys] || statusBaileys.statusConexaoBaileys}
+                    {statusBaileys.baileysNumeroConectado ? ` — +${statusBaileys.baileysNumeroConectado}` : ''}
+                  </Badge>
+                )}
+
+                {statusBaileys.statusConexaoBaileys === 'CONECTADO' ? (
+                  <Button variant="danger-soft" icon={WifiOff} onClick={desconectarBaileys} loading={desconectandoBaileys}>
+                    Desconectar
+                  </Button>
+                ) : statusBaileys.qrCodeAtual ? (
+                  <div className="flex flex-col items-center gap-2 py-2">
+                    <img src={statusBaileys.qrCodeAtual} alt="QR Code do WhatsApp Web" className="w-56 h-56 border border-[var(--border-main)] rounded-lg" />
+                    <p className="text-xs text-[var(--text-muted)]">Abra o WhatsApp no celular → Aparelhos conectados → Conectar um aparelho.</p>
+                  </div>
+                ) : (
+                  <Button variant="primary" icon={QrCode} onClick={conectarBaileys} loading={conectandoBaileys}>
+                    Conectar via QR Code
+                  </Button>
+                )}
+              </div>
+            </TabsContent>
+          </Tabs>
 
           <div className="border-t border-[var(--border-main)] pt-4 flex items-center justify-between">
             <div>
@@ -504,10 +629,6 @@ export default function BotsClientePage() {
               {online ? 'Desligar' : 'Ligar'}
             </Button>
           </div>
-        </div>
-
-        <div className="flex justify-end mt-5">
-          <Button variant="primary" onClick={salvarCanal} loading={salvandoCanal}>Salvar conexao</Button>
         </div>
       </Modal>
     </div>
